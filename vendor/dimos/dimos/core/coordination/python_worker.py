@@ -1,0 +1,549 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+from __future__ import annotations
+
+from dataclasses import dataclass
+import logging
+import multiprocessing
+from multiprocessing.connection import Connection
+import os
+import signal
+import sys
+import threading
+import traceback
+from typing import TYPE_CHECKING, Any
+
+from dimos.core.coordination.worker_messages import (
+    CallMethodRequest,
+    DeployModuleRequest,
+    GetAttrRequest,
+    SetRefRequest,
+    ShutdownRequest,
+    SuppressConsoleRequest,
+    UndeployModuleRequest,
+    WorkerRequest,
+    WorkerResponse,
+)
+from dimos.core.global_config import GlobalConfig, global_config
+from dimos.protocol.encode.cbor import decode, encode
+from dimos.protocol.pubsub.impl.webrtc.providers.spec import shutdown_all_providers
+from dimos.utils.logging_config import setup_logger
+from dimos.utils.sequential_ids import SequentialIds
+
+if TYPE_CHECKING:
+    from dimos.core.module import ModuleBase
+
+logger = setup_logger()
+
+
+def _send(conn: Connection, message: Any) -> None:
+    conn.send_bytes(encode(message))
+
+
+def _recv(conn: Connection) -> Any:
+    return decode(conn.recv_bytes())
+
+
+class ActorFuture:
+    """Mimics Dask's ActorFuture - wraps a result with .result() method."""
+
+    def __init__(self, value: Any) -> None:
+        self._value = value
+
+    def result(self, _timeout: float | None = None) -> Any:
+        return self._value
+
+
+class MethodCallProxy:
+    """Proxy that wraps an Actor to support method calls returning ActorFuture.
+
+    Used as the owner of RemoteOut/RemoteIn on the parent side so that calls like
+    `owner.set_transport(name, value).result()` work through the pipe to the worker.
+    """
+
+    def __init__(self, actor: Actor) -> None:
+        self._actor = actor
+
+    def cbor_encode(self) -> Actor:
+        return self._actor
+
+    @classmethod
+    def cbor_decode(cls, actor: Actor) -> MethodCallProxy:
+        return cls(actor)
+
+    def __getattr__(self, name: str) -> Any:
+        # Don't intercept private/dunder attributes - they must follow normal lookup.
+        if name.startswith("_"):
+            raise AttributeError(name)
+
+        def _call(*args: Any, **kwargs: Any) -> ActorFuture:
+            result = self._actor._send_request_to_worker(
+                CallMethodRequest(
+                    module_id=self._actor._module_id,
+                    name=name,
+                    args=args,
+                    kwargs=kwargs,
+                )
+            )
+            return ActorFuture(result)
+
+        return _call
+
+
+class Actor:
+    """Proxy that forwards method calls to the worker process."""
+
+    def __init__(
+        self,
+        conn: Connection | None,
+        module_class: type[ModuleBase] | None,
+        worker_id: int,
+        module_id: int = 0,
+        lock: threading.Lock | None = None,
+    ) -> None:
+        self._conn = conn
+        self._cls = module_class
+        self._worker_id = worker_id
+        self._module_id = module_id
+        self._lock = lock
+
+    def cbor_encode(self) -> dict[str, int]:
+        """Only the ids cross a process boundary.
+
+        The connection and the lock cannot, and the class would make every
+        receiving process import the module and its dependencies; nothing reads
+        it off an actor that crossed a process boundary.
+        """
+        return {"worker_id": self._worker_id, "module_id": self._module_id}
+
+    @classmethod
+    def cbor_decode(cls, data: dict[str, int]) -> Actor:
+        return cls(None, None, data["worker_id"], data["module_id"], None)
+
+    def _send_request_to_worker(self, request: WorkerRequest) -> Any:
+        if self._conn is None:
+            raise RuntimeError("Actor connection not available - cannot send requests")
+        # Encode and decode outside the lock: an unencodable argument raises to the
+        # caller, and a large result is decoded, without holding up the other modules
+        # on this worker.
+        payload = encode(request)
+        if self._lock is not None:
+            with self._lock:
+                self._conn.send_bytes(payload)
+                reply = self._conn.recv_bytes()
+        else:
+            self._conn.send_bytes(payload)
+            reply = self._conn.recv_bytes()
+        response: WorkerResponse = decode(reply)
+        if response.error:
+            if "AttributeError" in response.error:  # TODO: better error handling
+                raise AttributeError(response.error)
+            raise RuntimeError(f"Worker error: {response.error}")
+        return response.result
+
+    def set_ref(self, ref: Any) -> ActorFuture:
+        """Set the actor reference on the remote module."""
+        result = self._send_request_to_worker(SetRefRequest(module_id=self._module_id, ref=ref))
+        return ActorFuture(result)
+
+    def __getattr__(self, name: str) -> Any:
+        """Proxy attribute access to the worker process."""
+        if name.startswith("_"):
+            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+
+        return self._send_request_to_worker(GetAttrRequest(module_id=self._module_id, name=name))
+
+
+# Global forkserver context. Using `forkserver` instead of `fork` because it
+# avoids CUDA context corruption issues.
+_forkserver_ctx: Any = None
+
+
+def get_forkserver_context() -> Any:
+    global _forkserver_ctx
+    if _forkserver_ctx is None:
+        _forkserver_ctx = multiprocessing.get_context("forkserver")
+    return _forkserver_ctx
+
+
+def reset_forkserver_context() -> None:
+    """Reset the forkserver context. Used in tests to ensure clean state."""
+    global _forkserver_ctx
+    _forkserver_ctx = None
+
+
+_worker_ids = SequentialIds()
+_module_ids = SequentialIds()
+
+
+class PythonWorker:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._modules: dict[int, Actor] = {}
+        self._reserved: int = 0
+        self._process: Any = None
+        self._conn: Connection | None = None
+        self._worker_id: int = _worker_ids.next()
+        self.dedicated: bool = False
+
+    @property
+    def module_count(self) -> int:
+        return len(self._modules) + self._reserved
+
+    @property
+    def has_exited(self) -> bool:
+        """Whether the child is confirmed dead, including an unreaped exit."""
+        return self._process is not None and self._process.exitcode is not None
+
+    @property
+    def pid(self) -> int | None:
+        """PID of the worker process, or ``None`` if not alive."""
+        if self._process is None:
+            return None
+        try:
+            # Signal 0 just checks if the process is alive.
+            pid: int | None = self._process.pid
+            if pid is None:
+                return None
+            os.kill(pid, 0)
+            return pid
+        except OSError:
+            return None
+
+    @property
+    def worker_id(self) -> int:
+        return self._worker_id
+
+    @property
+    def module_names(self) -> list[str]:
+        names = []
+        for actor in self._modules.values():
+            # Parent-side actors always carry their class; only copies that crossed a
+            # process boundary drop it.
+            assert actor._cls is not None
+            names.append(actor._cls.__name__)
+        return names
+
+    def reserve_slot(self) -> None:
+        """Reserve a slot so _select_worker() sees the pending load."""
+        self._reserved += 1
+
+    def start_process(self) -> None:
+        ctx = get_forkserver_context()
+        parent_conn, child_conn = ctx.Pipe()
+        self._conn = parent_conn
+
+        self._process = ctx.Process(
+            target=_worker_entrypoint,
+            args=(child_conn, self._worker_id),
+            daemon=True,
+        )
+        self._process.start()
+        child_conn.close()
+
+    def deploy_module(
+        self,
+        module_class: type[ModuleBase],
+        global_config: GlobalConfig = global_config,
+        kwargs: dict[str, Any] | None = None,
+    ) -> Actor:
+        if self._conn is None:
+            raise RuntimeError("Worker process not started")
+
+        kwargs = dict(kwargs or {})
+        kwargs["g"] = global_config
+        module_id = _module_ids.next()
+
+        request = DeployModuleRequest(module_id=module_id, module_class=module_class, kwargs=kwargs)
+        try:
+            payload = encode(request)
+            with self._lock:
+                self._conn.send_bytes(payload)
+                reply = self._conn.recv_bytes()
+            response: WorkerResponse = decode(reply)
+
+            if response.error:
+                raise RuntimeError(f"Failed to deploy module: {response.error}")
+
+            actor = Actor(self._conn, module_class, self._worker_id, module_id, self._lock)
+            actor.set_ref(actor).result()
+
+            self._modules[module_id] = actor
+            logger.info(
+                "Deployed module.",
+                module=module_class.__name__,
+                worker_id=self._worker_id,
+                module_id=module_id,
+            )
+            return actor
+        finally:
+            self._reserved = max(0, self._reserved - 1)
+
+    def undeploy_module(self, module_id: int) -> None:
+        """Stop and remove a single module from the worker process."""
+        if self._conn is None:
+            raise RuntimeError("Worker process not started")
+
+        with self._lock:
+            # Only a confirmed exit permits removal without a teardown reply.
+            # The child may exit before or during this request.
+            if not self.has_exited:
+                try:
+                    _send(self._conn, UndeployModuleRequest(module_id=module_id))
+                    response: WorkerResponse = _recv(self._conn)
+                except (BrokenPipeError, EOFError, ConnectionResetError):
+                    if not self.has_exited:
+                        raise
+                else:
+                    if response.error:
+                        raise RuntimeError(f"Failed to undeploy module: {response.error}")
+
+        self._modules.pop(module_id, None)
+
+    def suppress_console(self) -> None:
+        if self._conn is None:
+            return
+        try:
+            with self._lock:
+                _send(self._conn, SuppressConsoleRequest())
+                _recv(self._conn)
+        except (BrokenPipeError, EOFError, ConnectionResetError):
+            pass
+
+    def shutdown(self) -> None:
+        if self._conn is not None:
+            try:
+                with self._lock:
+                    _send(self._conn, ShutdownRequest())
+                    if self._conn.poll(timeout=5):
+                        _recv(self._conn)
+                    else:
+                        logger.warning(
+                            "Worker did not respond to shutdown within 5s, closing pipe.",
+                            worker_id=self._worker_id,
+                        )
+            except (BrokenPipeError, EOFError, ConnectionResetError):
+                pass
+            finally:
+                self._conn.close()
+                self._conn = None
+
+        if self._process is not None:
+            self._process.join(timeout=5)
+            if self._process.is_alive():
+                logger.warning(
+                    "Worker still alive after 5s, terminating.",
+                    worker_id=self._worker_id,
+                )
+                self._process.terminate()
+                self._process.join(timeout=1)
+                if self._process.is_alive():
+                    logger.warning(
+                        "Worker ignored termination, killing.",
+                        worker_id=self._worker_id,
+                    )
+                    self._process.kill()
+                    self._process.join(timeout=1)
+                    if self._process.is_alive():
+                        raise RuntimeError(f"Worker {self._worker_id} did not exit after SIGKILL")
+            self._process.close()
+            self._process = None
+        self._modules.clear()
+        self._reserved = 0
+
+
+def _suppress_console_output() -> None:
+    """Redirect stdout/stderr to /dev/null and strip console handlers."""
+    devnull = open(os.devnull, "w")
+    os.dup2(devnull.fileno(), sys.stdout.fileno())
+    os.dup2(devnull.fileno(), sys.stderr.fileno())
+    devnull.close()
+
+    # Remove StreamHandlers.
+    for name in list(logging.Logger.manager.loggerDict):
+        lg = logging.getLogger(name)
+        lg.handlers = [
+            h
+            for h in lg.handlers
+            if not isinstance(h, logging.StreamHandler) or isinstance(h, logging.FileHandler)
+        ]
+
+
+@dataclass
+class _WorkerState:
+    instances: dict[int, Any]
+    worker_id: int
+    should_stop: bool = False
+
+
+def _worker_entrypoint(conn: Connection, worker_id: int) -> None:
+    signal.signal(signal.SIGINT, signal.SIG_IGN)  # coordinator handles shutdown
+    state = _WorkerState(instances={}, worker_id=worker_id)
+
+    try:
+        _worker_loop(conn, state)
+    except Exception as e:
+        # `f"... {e}"` is often empty (some exceptions stringify to "")
+        # and structlog's `exc_info` rendering may be elided in captured
+        # CI logs. Always emit the full traceback to stderr so the cause
+        # is visible regardless of the structured-log handler config.
+        traceback.print_exception(e, file=sys.stderr)
+        sys.stderr.flush()
+        logger.error(
+            "Worker process error",
+            worker_id=worker_id,
+            error_type=type(e).__name__,
+            error_repr=repr(e),
+            exc_info=True,
+        )
+    finally:
+        for module_id, instance in reversed(list(state.instances.items())):
+            try:
+                logger.info(
+                    "Worker stopping module...",
+                    module=type(instance).__name__,
+                    worker_id=worker_id,
+                    module_id=module_id,
+                )
+                instance.stop()
+                logger.info(
+                    "Worker module stopped.",
+                    module=type(instance).__name__,
+                    worker_id=worker_id,
+                    module_id=module_id,
+                )
+            except Exception:
+                logger.error("Error during worker shutdown", exc_info=True)
+        try:
+            # Disconnect provider singletons so broker sessions close promptly.
+            shutdown_all_providers()
+        except Exception:
+            logger.error("Error during worker provider shutdown", exc_info=True)
+
+
+def _start_warm_up(instance: ModuleBase) -> None:
+    """Pay the module's first-use imports on a daemon thread, overlapping the
+    other workers' deploys and the wiring phase instead of landing in start().
+
+    Subscribing calls ``<type>.lcm_warmup()`` (open3d, 2.5 s for PointCloud2)
+    and McpServer's first ``get_skills()`` imports langchain_core.tools. Either
+    one, if it arrives while this thread is still importing, just waits on the
+    module import lock.
+    """
+    types: set[type] = set()
+    if instance.warm_up_inputs:
+        # Collected here, not on the thread: wiring RPCs add attributes to the
+        # instance, and these properties iterate its __dict__.
+        types = {stream.type for stream in [*instance.inputs.values(), *instance.ios.values()]}
+
+    def warm_up() -> None:
+        for msg_type in types:
+            warmup = getattr(msg_type, "lcm_warmup", None)
+            if warmup is None:
+                continue
+            try:
+                warmup()
+            except Exception:
+                logger.warning("Stream type warm-up failed", type=msg_type, exc_info=True)
+        try:
+            instance.get_skills()
+        except ImportError:
+            pass  # no agent stack installed, so nothing will ask for skills
+        except Exception:
+            logger.warning("Skill warm-up failed", module=type(instance).__name__, exc_info=True)
+
+    threading.Thread(target=warm_up, name=f"warmup-{type(instance).__name__}", daemon=True).start()
+
+
+def _handle_request(request: Any, state: _WorkerState) -> WorkerResponse:
+    match request:
+        case DeployModuleRequest(module_id=module_id, module_class=module_class, kwargs=kwargs):
+            host_config = kwargs.get("g")
+            if host_config is not None:
+                global_config.update(**host_config.model_dump())
+
+            instance = module_class(**kwargs)
+            state.instances[module_id] = instance
+            _start_warm_up(instance)
+
+            return WorkerResponse(result=module_id)
+
+        case SetRefRequest(module_id=module_id, ref=ref):
+            state.instances[module_id].ref = ref
+            return WorkerResponse(result=state.worker_id)
+
+        case GetAttrRequest(module_id=module_id, name=name):
+            return WorkerResponse(result=getattr(state.instances[module_id], name))
+
+        case CallMethodRequest(module_id=module_id, name=name, args=args, kwargs=kwargs):
+            method = getattr(state.instances[module_id], name)
+            return WorkerResponse(result=method(*args, **kwargs))
+
+        case UndeployModuleRequest(module_id=module_id):
+            stopping_instance = state.instances.get(module_id)
+            if stopping_instance is not None:
+                stopping_instance.stop()
+                del state.instances[module_id]
+            return WorkerResponse(result=True)
+
+        case SuppressConsoleRequest():
+            _suppress_console_output()
+            return WorkerResponse(result=True)
+
+        case ShutdownRequest():
+            state.should_stop = True
+            return WorkerResponse(result=True)
+
+        case _:
+            return WorkerResponse(error=f"Unknown request type: {type(request)}")
+
+
+def _worker_loop(conn: Connection, state: _WorkerState) -> None:
+    while True:
+        try:
+            if not conn.poll(timeout=0.1):
+                continue
+            payload = conn.recv_bytes()
+        except EOFError:
+            break
+
+        request: Any = None
+        try:
+            request = decode(payload)
+            response = _handle_request(request, state)
+        except Exception as e:
+            response = WorkerResponse(
+                error=f"{e.__class__.__name__}: {e}\n{traceback.format_exc()}"
+            )
+
+        try:
+            _send(conn, response)
+        except (BrokenPipeError, EOFError):
+            break
+        except Exception as e:
+            # A result that cannot be encoded must not take the worker with it.
+            logger.error(
+                "Worker response could not be sent",
+                worker_id=state.worker_id,
+                request=type(request).__name__,
+                name=getattr(request, "name", None),
+                error_repr=repr(e),
+            )
+            try:
+                _send(conn, WorkerResponse(error=f"{e.__class__.__name__}: {e}"))
+            except (BrokenPipeError, EOFError):
+                break
+
+        if state.should_stop:
+            break

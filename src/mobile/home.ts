@@ -37,7 +37,7 @@ export function renderHome(parent: HTMLElement, navigate: MobileNavigate, connec
     </div><section class="pocket-shortcuts">
       <div class="pocket-section-heading"><h2>Make it yours.</h2><button data-go="tools">View all ${icon('arrow')}</button></div>
       <div class="pocket-feature-grid">
-        <button data-go="mapping"><span class="feature-icon mint">${icon('mapping')}</span><strong>Maps</strong><small>See the space around Go2.</small>${icon('arrow')}</button>
+        <button data-go="auto-mapping"><span class="feature-icon mint">${icon('mapping')}</span><strong>Maps</strong><small>See the space around Go2.</small>${icon('arrow')}</button>
         <button data-go="audio"><span class="feature-icon peach">${icon('audio')}</span><strong>Sound & voice</strong><small>Talk, record and play.</small>${icon('arrow')}</button>
         <button data-go="bt"><span class="feature-icon lilac">${icon('bt')}</span><strong>Wi-Fi setup</strong><small>Connect your robot.</small>${icon('arrow')}</button>
         <button data-go="status"><span class="feature-icon sand">${icon('status')}</span><strong>Robot health</strong><small>Check how Go2 is doing.</small>${icon('arrow')}</button>
@@ -56,7 +56,8 @@ export function renderTools(parent: HTMLElement, navigate: MobileNavigate, conne
   const sections = [
     { title: 'Everyday', rows: [
       ['control','control','Drive & actions','See through Go2’s camera and move around.'],
-      ['mapping','mapping','Maps & navigation','Create maps and choose where to go.'],
+      ['auto-mapping','mapping','Automatic mapping','Explore and save room maps on your Mac.'],
+      ['mapping','mapping','Robot maps & navigation','Create maps and choose where to go.'],
       ['audio','audio','Sound & voice','Play sounds, record and talk.'],
       ['status','status','Robot health','Battery, joints and sensors.'],
       ['bt','bt','Bluetooth & Wi-Fi','Set up Wi-Fi or connect a remote.'],

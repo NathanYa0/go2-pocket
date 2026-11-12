@@ -1,0 +1,416 @@
+#!/usr/bin/env python3
+
+# Copyright 2025-2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import asyncio
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
+import os
+import threading
+import time
+from typing import Any
+
+import pytest
+
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.protocol.pubsub.impl.lcmpubsub import LCM, Topic
+from dimos.protocol.pubsub.impl.memory import Memory
+from dimos.protocol.pubsub.impl.zenohpubsub import CborZenoh, Zenoh
+from dimos.protocol.service.zenohservice import ZenohSessionPool
+from dimos.utils.testing.collector import CallbackCollector
+
+
+@contextmanager
+def memory_context() -> Generator[Memory, None, None]:
+    """Context manager for Memory PubSub implementation."""
+    memory = Memory()
+    try:
+        yield memory
+    finally:
+        # Cleanup logic can be added here if needed
+        pass
+
+
+# Use Any for context manager type to accommodate every backend
+testdata: list[tuple[Callable[[], Any], Any, list[Any]]] = [
+    (memory_context, "topic", ["value1", "value2", "value3"]),
+]
+
+try:
+    from geometry_msgs.msg import Vector3 as ROSVector3
+    from rclpy.qos import (
+        QoSDurabilityPolicy,
+        QoSHistoryPolicy,
+        QoSProfile,
+        QoSReliabilityPolicy,
+    )
+
+    from dimos.protocol.pubsub.impl.rospubsub import RawROS, RawROSTopic
+
+    # Use RELIABLE QoS with larger depth for testing
+    _test_qos = QoSProfile(
+        reliability=QoSReliabilityPolicy.RELIABLE,
+        history=QoSHistoryPolicy.KEEP_ALL,
+        durability=QoSDurabilityPolicy.VOLATILE,
+        depth=5000,
+    )
+
+    @contextmanager
+    def ros_context() -> Generator[RawROS, None, None]:
+        ros_pubsub = RawROS(qos=_test_qos)
+        ros_pubsub.start()
+        time.sleep(0.1)
+        try:
+            yield ros_pubsub
+        finally:
+            ros_pubsub.stop()
+
+    testdata.append(
+        (
+            ros_context,
+            RawROSTopic(topic="/test_ros_topic", ros_type=ROSVector3, qos=_test_qos),
+            [
+                ROSVector3(x=1.0, y=2.0, z=3.0),
+                ROSVector3(x=4.0, y=5.0, z=6.0),
+                ROSVector3(x=7.0, y=8.0, z=9.0),
+            ],
+        )
+    )
+
+except ImportError:
+    # ROS 2 not available
+    print("ROS 2 not available")
+
+
+@contextmanager
+def lcm_context() -> Generator[LCM, None, None]:
+    lcm_pubsub = LCM()
+    lcm_pubsub.start()
+    yield lcm_pubsub
+    lcm_pubsub.stop()
+
+
+testdata.append(
+    (
+        lcm_context,
+        Topic(topic="/test_topic", lcm_type=Vector3),
+        [Vector3(1, 2, 3), Vector3(4, 5, 6), Vector3(7, 8, 9)],  # Using Vector3 as mock data,
+    )
+)
+
+
+from dimos.protocol.pubsub.impl.webrtc.test_transport import MockProvider
+from dimos.protocol.pubsub.impl.webrtc.webrtcpubsub import WebRTCPubSub
+
+
+@contextmanager
+def webrtc_context() -> Generator[WebRTCPubSub, None, None]:
+    provider = MockProvider()
+    pubsub = WebRTCPubSub(provider=provider)
+    pubsub.start()
+    yield pubsub
+    pubsub.stop()
+
+
+testdata.append(
+    (
+        webrtc_context,
+        "test_topic",
+        [b"webrtc_value1", b"webrtc_value2", b"webrtc_value3"],
+    )
+)
+
+
+@contextmanager
+def zenoh_lcm_context() -> Generator[Zenoh, None, None]:
+    pool = ZenohSessionPool()
+    zenoh_pubsub = Zenoh(session_pool=pool)
+    zenoh_pubsub.start()
+    try:
+        yield zenoh_pubsub
+    finally:
+        zenoh_pubsub.stop()
+        pool.close_all()
+
+
+testdata.append(
+    (
+        zenoh_lcm_context,
+        Topic(topic="dimos/test/spec", lcm_type=Vector3),
+        [Vector3(1, 2, 3), Vector3(4, 5, 6), Vector3(7, 8, 9)],
+    )
+)
+
+
+@contextmanager
+def zenoh_cbor_context() -> Generator[CborZenoh, None, None]:
+    pool = ZenohSessionPool()
+    zenoh_pubsub = CborZenoh(session_pool=pool)
+    zenoh_pubsub.start()
+    try:
+        yield zenoh_pubsub
+    finally:
+        zenoh_pubsub.stop()
+        pool.close_all()
+
+
+testdata.append(
+    (
+        zenoh_cbor_context,
+        Topic("dimos/test/spec/cbor"),
+        [{"key": "value1"}, {"key": "value2"}, {"key": "value3"}],
+    )
+)
+
+
+@pytest.mark.parametrize("pubsub_context, topic, values", testdata)
+def test_store(pubsub_context: Callable[[], Any], topic: Any, values: list[Any]) -> None:
+    with pubsub_context() as x:
+        collector = CallbackCollector(1)
+
+        x.subscribe(topic, collector)
+        x.publish(topic, values[0])
+        collector.wait()
+
+        assert len(collector.results) == 1
+        assert collector.results[0][0] == values[0]
+
+
+@pytest.mark.parametrize("pubsub_context, topic, values", testdata)
+def test_multiple_subscribers(
+    pubsub_context: Callable[[], Any], topic: Any, values: list[Any]
+) -> None:
+    """Test that multiple subscribers receive the same message."""
+    with pubsub_context() as x:
+        collector_1 = CallbackCollector(1)
+        collector_2 = CallbackCollector(1)
+
+        x.subscribe(topic, collector_1)
+        x.subscribe(topic, collector_2)
+
+        x.publish(topic, values[0])
+
+        collector_1.wait()
+        collector_2.wait()
+
+        assert len(collector_1.results) == 1
+        assert collector_1.results[0][0] == values[0]
+        assert len(collector_2.results) == 1
+        assert collector_2.results[0][0] == values[0]
+
+
+@pytest.mark.parametrize("pubsub_context, topic, values", testdata)
+def test_unsubscribe(pubsub_context: Callable[[], Any], topic: Any, values: list[Any]) -> None:
+    """Test that unsubscribed callbacks don't receive messages."""
+    with pubsub_context() as x:
+        # Create a list to capture received messages
+        received_messages: list[Any] = []
+
+        # Define callback function
+        def callback(message: Any, topic: Any) -> None:
+            received_messages.append(message)
+
+        # Subscribe and get unsubscribe function
+        unsubscribe = x.subscribe(topic, callback)
+
+        # Unsubscribe using the returned function
+        unsubscribe()
+
+        # Publish the first value
+        x.publish(topic, values[0])
+
+        # Give time to process the message if needed
+        time.sleep(0.1)
+
+        # Verify the callback was not called after unsubscribing
+        assert len(received_messages) == 0
+
+
+@pytest.mark.parametrize("pubsub_context, topic, values", testdata)
+def test_unsubscribe_nonblocking_during_dispatch(
+    pubsub_context: Callable[[], Any], topic: Any, values: list[Any]
+) -> None:
+    """unsubscribe() must not wait for an in-flight callback.
+
+    Unsubscribing threads may be ones the system needs for progress (an
+    asyncio event loop tearing down a module); a dispatch thread stuck in a
+    slow callback must not be able to wedge them.
+    """
+    with pubsub_context() as x:
+        in_callback = threading.Event()
+        release = threading.Event()
+
+        def slow_callback(message: Any, topic: Any) -> None:
+            in_callback.set()
+            release.wait(timeout=10.0)
+
+        unsubscribe = x.subscribe(topic, slow_callback)
+
+        # Publish from a helper thread: in-process backends dispatch
+        # synchronously on the publishing thread.
+        publisher = threading.Thread(target=x.publish, args=(topic, values[0]), daemon=True)
+        publisher.start()
+        assert in_callback.wait(timeout=5.0), "callback was never dispatched"
+
+        unsubscribed = threading.Event()
+
+        def do_unsubscribe() -> None:
+            unsubscribe()
+            unsubscribed.set()
+
+        unsubscriber = threading.Thread(target=do_unsubscribe, daemon=True)
+        unsubscriber.start()
+        try:
+            assert unsubscribed.wait(timeout=2.0), (
+                "unsubscribe blocked behind an in-flight callback"
+            )
+        finally:
+            release.set()
+            unsubscriber.join(timeout=5.0)
+            publisher.join(timeout=5.0)
+
+
+@pytest.mark.parametrize("pubsub_context, topic, values", testdata)
+def test_unsubscribe_from_callback(
+    pubsub_context: Callable[[], Any], topic: Any, values: list[Any]
+) -> None:
+    """A callback may tear down its own subscription (one-shot receivers)
+    without deadlocking, and delivery stops once it has."""
+    with pubsub_context() as x:
+        received: list[Any] = []
+        done = threading.Event()
+        unsubscribe: Callable[[], None] | None = None
+
+        def one_shot(message: Any, topic: Any) -> None:
+            received.append(message)
+            assert unsubscribe is not None
+            unsubscribe()
+            done.set()
+
+        unsubscribe = x.subscribe(topic, one_shot)
+        x.publish(topic, values[0])
+        assert done.wait(timeout=5.0), "self-unsubscribing callback deadlocked"
+
+        x.publish(topic, values[0])
+        time.sleep(0.1)
+        assert len(received) == 1
+
+
+@pytest.mark.parametrize("pubsub_context, topic, values", testdata)
+def test_multiple_messages(
+    pubsub_context: Callable[[], Any], topic: Any, values: list[Any]
+) -> None:
+    """Test that subscribers receive multiple messages in order."""
+    with pubsub_context() as x:
+        messages_to_send = values[1:] if len(values) > 1 else values
+        collector = CallbackCollector(len(messages_to_send))
+
+        x.subscribe(topic, collector)
+
+        for msg in messages_to_send:
+            x.publish(topic, msg)
+
+        collector.wait()
+
+        received_messages = [r[0] for r in collector.results]
+        assert len(received_messages) == len(messages_to_send)
+        assert received_messages == messages_to_send
+
+
+@pytest.mark.parametrize("pubsub_context, topic, values", testdata)
+async def test_async_iterator(
+    pubsub_context: Callable[[], Any], topic: Any, values: list[Any]
+) -> None:
+    """Test that async iterator receives messages correctly."""
+    with pubsub_context() as x:
+        # Get the messages to send (using the rest of the values)
+        messages_to_send = values[1:] if len(values) > 1 else values
+        received_messages = []
+
+        # Create the async iterator
+        async_iter = x.aiter(topic)
+
+        # Create a task to consume messages from the async iterator
+        async def consume_messages() -> None:
+            try:
+                async for message in async_iter:
+                    received_messages.append(message)
+                    # Stop after receiving all expected messages
+                    if len(received_messages) >= len(messages_to_send):
+                        break
+            except asyncio.CancelledError:
+                pass
+
+        # Start the consumer task
+        consumer_task = asyncio.create_task(consume_messages())
+
+        # Give the consumer a moment to set up
+        await asyncio.sleep(0.1)
+
+        # Publish messages
+        for msg in messages_to_send:
+            x.publish(topic, msg)
+            # Small delay to ensure message is processed
+            await asyncio.sleep(0.1)
+
+        # Wait for the consumer to finish or timeout
+        try:
+            await asyncio.wait_for(consumer_task, timeout=1.0)
+        except asyncio.TimeoutError:
+            consumer_task.cancel()
+            try:
+                await consumer_task
+            except asyncio.CancelledError:
+                pass
+
+        # Verify all messages were received in order
+        assert len(received_messages) == len(messages_to_send)
+        assert received_messages == messages_to_send
+
+
+@pytest.mark.flaky(reruns=1)
+@pytest.mark.self_hosted
+@pytest.mark.parametrize("pubsub_context, topic, values", testdata)
+def test_high_volume_messages(
+    pubsub_context: Callable[[], Any], topic: Any, values: list[Any]
+) -> None:
+    """Test that all messages are received correctly under moderate volume.
+    This is an acceptance test, not a benchmark, so volume is kept low (500)
+    to avoid flakiness. Might want separate expectations per transport later.
+    """
+    if pubsub_context is zenoh_cbor_context and os.getenv("CI"):
+        pytest.skip("flaky in CI, disabled until fixed")
+    with pubsub_context() as x:
+        received_messages: list[Any] = []
+
+        def callback(message: Any, topic: Any) -> None:
+            received_messages.append(message)
+
+        x.subscribe(topic, callback)
+
+        num_messages = 500
+        for _ in range(num_messages):
+            x.publish(topic, values[0])
+
+        # Wait for the whole batch. A loaded runner delivers with pauses, so
+        # "quiet for 100 ms" is not a sign that delivery has finished.
+        deadline = time.monotonic() + 10.0
+        while len(received_messages) < num_messages and time.monotonic() < deadline:
+            time.sleep(0.05)
+
+        # Capture count and clear list to avoid printing huge list on failure
+        received_len = len(received_messages)
+        received_messages.clear()
+        assert received_len == num_messages, f"Expected {num_messages} messages, got {received_len}"

@@ -4025,3 +4025,23 @@ html[data-theme="light"] .errors-row-time-rel {
   color: #8b92a0;
 }
 
+
+/* Hold-to-drive controls remain on the map while collecting a room scan. */
+.mapping-drive { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.mapping-drive .mapping-btn { user-select: none; -webkit-user-select: none; min-height: 44px; }
+
+.mapping-trace-legend { position: absolute; bottom: 12px; left: 12px; right: 12px; z-index: 2; pointer-events: none; padding: 7px 10px; border-radius: 8px; font-size: 12px; color: #142c43; background: rgba(255,255,255,.9); }
+
+/* Nearby live LiDAR remains in its own frame beside the accumulated room map. */
+.mapping-live-view {position:absolute;left:12px;bottom:12px;width:clamp(190px,29vw,300px);z-index:5;border:1px solid var(--pocket-line,#596471);border-radius:12px;overflow:hidden;background:var(--pocket-surface,#1a1d23);color:var(--pocket-ink,#fff);box-shadow:0 3px 14px #0003}
+.mapping-live-view[hidden],.mapping-live-body[hidden],.mapping-live-status[hidden] {display:none!important}
+.mapping-live-header {display:flex;align-items:center;justify-content:space-between;gap:6px;padding:0 5px 0 10px;min-height:44px;font-size:12px}
+.mapping-live-header button {width:44px;height:44px;border:0;border-radius:6px;background:transparent;color:inherit;font:inherit;font-size:23px;cursor:pointer}
+.mapping-live-header button:focus-visible {outline:2px solid #579dff;outline-offset:-3px}
+.mapping-live-body {height:clamp(96px,23vh,160px);overflow:hidden}
+.mapping-live-body canvas {display:block;width:100%;height:100%;touch-action:none}
+.mapping-live-status {padding:4px 10px;font-size:10px;color:var(--pocket-muted,#aab4c0)}
+.mapping-live-view.is-stale .mapping-live-body {opacity:.4}
+.mapping-live-view.is-collapsed {width:auto;min-width:155px}
+.mapping-viewport:has(.mapping-live-view:not([hidden]):not(.is-collapsed)) .mapping-trace-legend {left:calc(clamp(190px,29vw,300px) + 24px)}
+@media(max-height:450px) {.mapping-live-view {width:clamp(190px,28vw,245px)}.mapping-live-body {height:100px}.mapping-viewport:has(.mapping-live-view:not([hidden]):not(.is-collapsed)) .mapping-trace-legend {left:calc(clamp(190px,28vw,245px) + 24px)}}

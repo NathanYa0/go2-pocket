@@ -1,0 +1,513 @@
+# Copyright 2025-2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Tests for ZenohPubSubBase — raw bytes pub/sub over Zenoh."""
+
+from __future__ import annotations
+
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
+from functools import partial
+import threading
+
+import pytest
+
+pytest.importorskip("zenoh")
+
+import zenoh
+
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.protocol.pubsub.impl.lcmpubsub import Topic as LCMTopic
+from dimos.protocol.pubsub.impl.zenohpubsub import (
+    Topic,
+    ZenohPubSubBase,
+    ZenohQoS,
+    _key_expr_to_topic,
+    _topic_to_key_expr,
+)
+from dimos.protocol.service.zenohservice import LOOPBACK_LISTEN, ZenohSessionPool
+
+
+@pytest.fixture()
+def make_pubsub():
+    """Build started ZenohPubSubBase instances on isolated pools, clean up after."""
+    created = []
+
+    def _make(**kwargs):
+        pool = ZenohSessionPool()
+        ps = ZenohPubSubBase(session_pool=pool, **kwargs)
+        ps.start()
+        created.append((ps, pool))
+        return ps
+
+    yield _make
+    for ps, pool in created:
+        ps.stop()
+        # Close the pool so Zenoh's internal threads are joined
+        pool.close_all()
+
+
+@pytest.fixture()
+def pubsub(make_pubsub):
+    """Create and start a ZenohPubSubBase instance on an isolated pool, clean up after."""
+    return make_pubsub()
+
+
+@pytest.mark.flaky(reruns=1)
+@pytest.mark.parametrize(
+    ("all_topics", "subscription_count"),
+    [(False, 1), (True, 1), (True, 3)],
+    ids=["subscribe", "subscribe_all", "multiple_subscribe_all"],
+)
+@pytest.mark.parametrize("unsubscribe_only", [False, True], ids=["stop", "unsubscribe"])
+def test_shutdown_from_callback_completes_cleanup(
+    run_in_subprocess, all_topics, subscription_count, unsubscribe_only
+):
+    run_in_subprocess(_check_callback_shutdown, all_topics, subscription_count, unsubscribe_only)
+
+
+def _check_callback_shutdown(all_topics, subscription_count, unsubscribe_only):
+    with ExitStack() as cleanup:
+        pool = ZenohSessionPool()
+        cleanup.callback(pool.close_all)
+        pubsub = ZenohPubSubBase(
+            session_pool=pool,
+            mode="peer",
+            connect=[],
+            listen=[LOOPBACK_LISTEN],
+            scouting=False,
+            scouting_interface="",
+            multicast=False,
+            gossip=False,
+            connect_timeout=0,
+        )
+        cleanup.callback(pubsub.stop)
+        pubsub.start()
+        topic = Topic("dimos/callback_shutdown")
+        finished = [threading.Event() for _ in range(subscription_count)]
+        received = [[] for _ in range(subscription_count)]
+        errors = []
+        unsubscribes = []
+        drain_threads = []
+        callbacks_ready = threading.Barrier(subscription_count)
+
+        def callback(index, message, received_topic):
+            try:
+                if all_topics:
+                    drain_threads.append(threading.current_thread())
+                # Keep every callback active before any of them starts cleanup.
+                callbacks_ready.wait(timeout=2.0)
+                if unsubscribe_only:
+                    unsubscribes[index]()
+                else:
+                    pubsub.stop()
+                received[index].append((message, received_topic))
+            except Exception as error:
+                errors.append(error)
+            finally:
+                finished[index].set()
+
+        for index in range(subscription_count):
+            on_message = partial(callback, index)
+            unsubscribe = (
+                pubsub.subscribe_all(on_message)
+                if all_topics
+                else pubsub.subscribe(topic, on_message)
+            )
+            unsubscribes.append(unsubscribe)
+            cleanup.callback(unsubscribe)
+        pubsub.publish(topic, b"stop")
+
+        for event in finished:
+            assert event.wait(timeout=2.0)
+        for thread in drain_threads:
+            thread.join(timeout=2.0)
+        assert errors == [], errors
+        assert received == [[(b"stop", topic)]] * subscription_count
+        assert not any(thread.is_alive() for thread in drain_threads)
+        assert pubsub._subscribers == []
+        assert pubsub._drain_stops == []
+        assert len(pubsub._publishers) == int(unsubscribe_only)
+
+
+class TestZenohPubSubBase:
+    def test_publish_and_subscribe(self, pubsub, retry_until) -> None:
+        received = []
+        event = threading.Event()
+        topic = Topic("dimos/test/basic")
+
+        def callback(msg: bytes, t: Topic) -> None:
+            received.append(msg)
+            event.set()
+
+        pubsub.subscribe(topic, callback)
+        retry_until(event, lambda: pubsub.publish(topic, b"hello zenoh"))
+        assert received[0] == b"hello zenoh"
+
+    def test_multiple_subscribers(self, pubsub, retry_until) -> None:
+        received_a: list[bytes] = []
+        received_b: list[bytes] = []
+        both_received = threading.Event()
+        countdown = threading.Barrier(2, action=both_received.set)
+        topic = Topic("dimos/test/multi")
+
+        def callback_a(msg: bytes, t: Topic) -> None:
+            received_a.append(msg)
+            countdown.wait()
+
+        def callback_b(msg: bytes, t: Topic) -> None:
+            received_b.append(msg)
+            countdown.wait()
+
+        pubsub.subscribe(topic, callback_a)
+        pubsub.subscribe(topic, callback_b)
+        retry_until(both_received, lambda: pubsub.publish(topic, b"broadcast"))
+        assert received_a[-1:] == [b"broadcast"]
+        assert received_b[-1:] == [b"broadcast"]
+
+    def test_unsubscribe(self, pubsub, retry_until) -> None:
+        received: list[bytes] = []
+        event = threading.Event()
+        topic = Topic("dimos/test/unsub")
+
+        def callback(msg: bytes, t: Topic) -> None:
+            received.append(msg)
+            event.set()
+
+        unsub = pubsub.subscribe(topic, callback)
+        retry_until(event, lambda: pubsub.publish(topic, b"before"))
+        assert received == [b"before"]
+
+        # Unsubscribe and verify no more messages arrive
+        unsub()
+        received.clear()
+        event.clear()
+        pubsub.publish(topic, b"after")
+
+        # We can't prove a negative with an event, so use a short timeout
+        assert not event.wait(timeout=0.2), "Received message after unsubscribe"
+        assert received == []
+
+    def test_unsubscribe_is_idempotent(self, pubsub) -> None:
+        topic = Topic("dimos/test/idempotent")
+        unsub = pubsub.subscribe(topic, lambda msg, t: None)
+        unsub()
+        unsub()  # should not raise
+
+    def test_concurrent_unsubscribe(self, pubsub) -> None:
+        topic = Topic("dimos/test/concurrent_unsub")
+        unsub = pubsub.subscribe(topic, lambda msg, t: None)
+
+        n_threads = 8
+        barrier = threading.Barrier(n_threads)
+        errors: list[Exception] = []
+
+        def race() -> None:
+            barrier.wait()
+            try:
+                unsub()
+            except Exception as e:
+                errors.append(e)
+
+        threads = [threading.Thread(target=race) for _ in range(n_threads)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert errors == []
+        assert len(pubsub._subscribers) == 0
+
+    def test_concrete_subscription_passes_topic_through(self, pubsub, retry_until) -> None:
+        received: list[Topic] = []
+        event = threading.Event()
+        topic = Topic("dimos/test/passthrough", lcm_type=Twist)
+
+        def callback(msg: bytes, t: Topic) -> None:
+            received.append(t)
+            event.set()
+
+        pubsub.subscribe(topic, callback)
+        retry_until(event, lambda: pubsub.publish(topic, b"data"))
+        assert received[0] is topic
+
+    def test_untyped_topic_with_dotted_segment_round_trips(self, pubsub, retry_until) -> None:
+        # The last segment resolves as a type name, but a concrete subscription
+        # must not re-parse it into base+type on receive.
+        received: list[Topic] = []
+        event = threading.Event()
+        topic = Topic("dimos/test/geometry_msgs.Twist")
+
+        def callback(msg: bytes, t: Topic) -> None:
+            received.append(t)
+            event.set()
+
+        pubsub.subscribe(topic, callback)
+        retry_until(event, lambda: pubsub.publish(topic, b"data"))
+        assert received[0] is topic
+
+    def test_publish_before_subscriber_does_not_error(self, pubsub) -> None:
+        topic = Topic("dimos/test/no_sub")
+        pubsub.publish(topic, b"orphan message")  # should not raise
+
+    def test_stop_cleans_up_publishers_and_subscribers(self, pubsub) -> None:
+        topic = Topic("dimos/test/cleanup")
+        pubsub.subscribe(topic, lambda msg, t: None)
+        pubsub.publish(topic, b"test")
+        pubsub.stop()
+        assert len(pubsub._publishers) == 0
+        assert len(pubsub._subscribers) == 0
+
+    def test_stop_waits_for_in_flight_publish(self, pubsub) -> None:
+        topic = Topic("dimos/test/stop_during_publish")
+        publishing = threading.Event()
+        release_publish = threading.Event()
+        stopping = threading.Event()
+        stopped = threading.Event()
+        received = []
+
+        def hold_publish(sample):
+            publishing.set()
+            assert release_publish.wait(timeout=10.0)
+            received.append(sample.payload.to_bytes())
+
+        def stop():
+            stopping.set()
+            try:
+                pubsub.stop()
+            finally:
+                stopped.set()
+
+        # A direct callback holds the native Publisher.put() borrow until released.
+        with (
+            pubsub.session.declare_subscriber(
+                topic.key_expr, zenoh.handlers.Callback(hold_publish, indirect=False)
+            ),
+            ThreadPoolExecutor(max_workers=2) as executor,
+        ):
+            publish_result = executor.submit(pubsub.publish, topic, b"in flight")
+            try:
+                assert publishing.wait(timeout=2.0)
+                stop_result = executor.submit(stop)
+                assert stopping.wait(timeout=2.0)
+                assert not stopped.wait(timeout=0.1), "stop completed while put was still active"
+            finally:
+                release_publish.set()
+            publish_result.result(timeout=2.0)
+            stop_result.result(timeout=2.0)
+
+        assert received == [b"in flight"]
+        assert pubsub._publishers == {}
+
+    def test_subscribe_all(self, pubsub, retry_until) -> None:
+        received: list[bytes] = []
+        event = threading.Event()
+        topic = Topic("dimos/test/any/topic")
+
+        def callback(msg: bytes, t: Topic) -> None:
+            received.append(msg)
+            if msg == b"wildcard":
+                event.set()
+
+        pubsub.subscribe_all(callback)
+        retry_until(event, lambda: pubsub.publish(topic, b"wildcard"))
+        assert b"wildcard" in received
+
+    def test_subscribe_all_hears_a_domain_and_keys_its_channel(self, pubsub, retry_until) -> None:
+        topic = Topic("dimos-domains/r1/test/domain/cells")
+        keyed: list[bytes] = []
+        event = threading.Event()
+
+        def key(msg: bytes) -> bytes:
+            keyed.append(msg)
+            return msg
+
+        def callback(msg: bytes, t: Topic) -> None:
+            if t.topic == topic.topic:
+                event.set()
+
+        pubsub.subscribe_all(callback, keyed={"test/domain/cells": key})
+        retry_until(event, lambda: pubsub.publish(topic, b"cell"))
+        assert b"cell" in keyed
+
+    def test_subscribe_all_keeps_every_key_of_a_keyed_channel(
+        self, pubsub, retry_until, wait_until
+    ) -> None:
+        keyed = Topic("dimos/test/keyed/cells")
+        plain = Topic("dimos/test/keyed/plain")
+        probe = Topic("dimos/test/keyed/probe")
+        got: dict[str, list[bytes]] = {keyed.topic: [], plain.topic: []}
+        live = threading.Event()
+
+        def callback(msg: bytes, t: Topic) -> None:
+            if t.topic == probe.topic:
+                live.set()
+            elif t.topic in got:
+                got[t.topic].append(msg)
+
+        pubsub.subscribe_all(callback, keyed={"test/keyed/cells": lambda msg: msg[:1]})
+        retry_until(live, lambda: pubsub.publish(probe, b"probe"))
+        sent = [bytes([i]) for i in range(30)]
+        for msg in sent:
+            pubsub.publish(keyed, msg)
+            pubsub.publish(plain, msg)
+        wait_until(lambda: len(got[keyed.topic]) == len(sent), timeout=5.0, interval=0.01)
+        wait_until(lambda: got[plain.topic][-1:] == sent[-1:], timeout=5.0, interval=0.01)
+
+        assert got[keyed.topic] == sent
+
+    def test_subscribe_all_keeps_the_latest_per_key_behind_a_held_drain(
+        self, pubsub, retry_until, wait_until
+    ) -> None:
+        keyed = Topic("dimos/test/held/cells")
+        probe = Topic("dimos/test/held/probe")
+        got: list[bytes] = []
+        blocked = threading.Event()
+        release = threading.Event()
+
+        def callback(msg: bytes, t: Topic) -> None:
+            if t.topic == probe.topic:
+                # Hold the drain here so the keyed channel piles up behind it.
+                blocked.set()
+                release.wait(timeout=10.0)
+            elif t.topic == keyed.topic:
+                got.append(msg)
+
+        pubsub.subscribe_all(callback, keyed={"test/held/cells": lambda msg: msg[:2]})
+        retry_until(blocked, lambda: pubsub.publish(probe, b"probe"))
+        cells = [i.to_bytes(2, "big") for i in range(1000)]
+        try:
+            for version in (b"a", b"b"):
+                for cell in cells:
+                    pubsub.publish(keyed, cell + version)
+        finally:
+            release.set()
+        newest = {cell: b"b" for cell in cells}
+
+        def last_values() -> dict[bytes, bytes]:
+            return {msg[:2]: msg[2:] for msg in list(got)}
+
+        wait_until(lambda: last_values() == newest, timeout=5.0, interval=0.01)
+        assert len(got) < 2 * len(cells)
+
+    def test_subscribe_after_stop_does_not_track(self, pubsub) -> None:
+        # Models the declare/stop race: once stopped, a newly declared subscriber
+        # must undeclare itself rather than be tracked (and leak past shutdown).
+        pubsub.stop()
+        unsub = pubsub.subscribe(Topic("dimos/test/after_stop"), lambda msg, t: None)
+        assert pubsub._subscribers == []
+        unsub()  # no-op, must not raise
+
+    def test_subscribe_all_after_stop_is_noop(self, pubsub) -> None:
+        pubsub.stop()
+        unsub = pubsub.subscribe_all(lambda msg, t: None)
+        assert pubsub._drain_stops == []
+        unsub()  # no-op, must not raise
+
+
+class TestPublisherQoS:
+    """Publisher QoS comes from the Topic and is applied at declare time."""
+
+    def test_publisher_qos_from_topic(self, pubsub) -> None:
+        topic = Topic(
+            "dimos/test/qos/stream",
+            qos=ZenohQoS(reliability="best_effort", congestion_control="drop"),
+        )
+        pubsub.publish(topic, b"x")
+        pub = pubsub._publishers["dimos/test/qos/stream"]
+        assert pub.reliability == zenoh.Reliability.BEST_EFFORT
+        assert pub.congestion_control == zenoh.CongestionControl.DROP
+
+    def test_publisher_default_qos_without_topic_qos(self, pubsub) -> None:
+        # Pins zenoh's publisher defaults: reliable, drop under congestion.
+        pubsub.publish(Topic("dimos/test/qos/defaults"), b"x")
+        pub = pubsub._publishers["dimos/test/qos/defaults"]
+        assert pub.reliability == zenoh.Reliability.RELIABLE
+        assert pub.congestion_control == zenoh.CongestionControl.DROP
+
+    def test_plain_lcm_topic_gets_default_qos(self, pubsub) -> None:
+        # Shared code (TF, encoders) still passes lcmpubsub Topics.
+        pubsub.publish(LCMTopic("dimos/test/qos/plain"), b"x")
+        pub = pubsub._publishers["dimos/test/qos/plain"]
+        assert pub.reliability == zenoh.Reliability.RELIABLE
+
+    def test_partial_qos_omits_unset_fields(self, pubsub) -> None:
+        topic = Topic("dimos/test/qos/partial", qos=ZenohQoS(congestion_control="block"))
+        pubsub.publish(topic, b"x")
+        pub = pubsub._publishers["dimos/test/qos/partial"]
+        assert pub.reliability == zenoh.Reliability.RELIABLE  # zenoh default kept
+        assert pub.congestion_control == zenoh.CongestionControl.BLOCK
+
+
+class TestZenohQoSToWire:
+    """QoS serialization sent to native modules over stdin."""
+
+    def test_full_qos(self) -> None:
+        qos = ZenohQoS(reliability="best_effort", congestion_control="drop")
+        assert qos.to_wire() == {"reliability": "best_effort", "congestion_control": "drop"}
+
+    def test_partial_qos_omits_unset(self) -> None:
+        assert ZenohQoS(congestion_control="block").to_wire() == {"congestion_control": "block"}
+
+    def test_empty_qos(self) -> None:
+        assert ZenohQoS().to_wire() == {}
+
+
+class TestTopicKeyExprConversion:
+    """Tests for _topic_to_key_expr and _key_expr_to_topic round-trip."""
+
+    def test_typed_topic_to_key_expr(self) -> None:
+        topic = Topic("dimos/cmd_vel", lcm_type=Twist)
+        key = _topic_to_key_expr(topic)
+        assert key == "dimos/cmd_vel/geometry_msgs.Twist"
+
+    def test_untyped_topic_to_key_expr(self) -> None:
+        topic = Topic("dimos/data")
+        key = _topic_to_key_expr(topic)
+        assert key == "dimos/data"
+
+    def test_key_expr_to_topic_with_known_type(self) -> None:
+        topic = _key_expr_to_topic("dimos/cmd_vel/geometry_msgs.Twist")
+        assert topic.topic == "dimos/cmd_vel"
+        assert topic.lcm_type is Twist
+
+    def test_key_expr_to_topic_with_unknown_type(self) -> None:
+        topic = _key_expr_to_topic("dimos/data/unknown.FooBar")
+        # Last segment doesn't resolve — entire string becomes the topic
+        assert topic.topic == "dimos/data/unknown.FooBar"
+        assert topic.lcm_type is None
+
+    def test_key_expr_to_topic_with_no_slash(self) -> None:
+        topic = _key_expr_to_topic("simple_topic")
+        assert topic.topic == "simple_topic"
+        assert topic.lcm_type is None
+
+    def test_key_expr_to_topic_uses_default_type(self) -> None:
+        topic = _key_expr_to_topic("dimos/data", default_lcm_type=Twist)
+        assert topic.topic == "dimos/data"
+        assert topic.lcm_type is Twist
+
+    def test_round_trip_typed(self) -> None:
+        original = Topic("dimos/color_image", lcm_type=Image)
+        key = _topic_to_key_expr(original)
+        reconstructed = _key_expr_to_topic(key)
+        assert reconstructed.topic == original.topic
+        assert reconstructed.lcm_type is original.lcm_type
+
+    def test_round_trip_untyped(self) -> None:
+        original = Topic("dimos/gps_location")
+        key = _topic_to_key_expr(original)
+        reconstructed = _key_expr_to_topic(key)
+        assert reconstructed.topic == original.topic
+        assert reconstructed.lcm_type is None

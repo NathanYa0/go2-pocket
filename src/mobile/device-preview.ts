@@ -2,6 +2,7 @@ import { native } from './platform';
 
 /** Give desktop browsers a real phone viewport, including its media queries. */
 export function installDevicePreview(): boolean {
+  if (new URLSearchParams(location.search).get('desktop') === '1') return false;
   if (native || window.parent !== window || !matchMedia('(hover: hover) and (pointer: fine)').matches) return false;
 
   document.body.classList.add('device-preview');
@@ -29,7 +30,7 @@ export function installDevicePreview(): boolean {
   const layout = () => {
     const width = landscape ? 852 : 393;
     const height = landscape ? 393 : 852;
-    const scale = Math.max(.1, Math.min(1, (stage.clientWidth - 40) / (width + 24), (stage.clientHeight - 32) / (height + 24)));
+    const scale = Math.max(.1, Math.min(1.4, (stage.clientWidth - 40) / (width + 24), (stage.clientHeight - 32) / (height + 24)));
     frame.style.width = `${width}px`;
     frame.style.height = `${height}px`;
     phone.style.transform = `scale(${scale})`;
@@ -48,10 +49,10 @@ export function installDevicePreview(): boolean {
     if (event.source !== frame.contentWindow || event.origin !== location.origin || event.data?.type !== 'go2-device-screen') return;
     const screen = event.data.screen;
     if (typeof screen !== 'string' || screen === lastScreen) return;
-    const wasDriving = lastScreen === 'control';
+    const wasDriving = lastScreen === 'control' || lastScreen === 'mapping';
     lastScreen = screen;
-    if (screen === 'control' || wasDriving) {
-      landscape = screen === 'control';
+    if (screen === 'control' || screen === 'mapping' || wasDriving) {
+      landscape = screen === 'control' || screen === 'mapping';
       layout();
     }
   });

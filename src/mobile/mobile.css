@@ -10,6 +10,16 @@
 .pocket-unlock .pocket-network-help {margin:0 0 12px}
 .pocket-unlock input {width:100%;min-width:0;box-sizing:border-box}
 .pocket-device-id {display:none}
+
+/* Saved map controls must fit the sidebar's larger type and touch targets. */
+html body .mapping-saved-list {min-width:0;max-height:360px;overflow-y:auto;overflow-x:hidden;gap:12px;padding:2px}
+html body .mapping-map-row {display:flex;flex-direction:column;align-items:stretch;justify-content:flex-start;gap:12px;min-width:0;width:100%;padding:14px}
+html body .mapping-map-info {width:100%;min-width:0;gap:5px}
+html body .mapping-map-name {white-space:normal;overflow-wrap:anywhere;line-height:1.4}
+html body .mapping-map-date {overflow-wrap:anywhere}
+html body .mapping-map-id {font-size:13px!important;line-height:1.4!important;white-space:normal;overflow-wrap:anywhere}
+html body .mapping-map-actions {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;width:100%;min-width:0;flex-shrink:1}
+html body .mapping-map-actions .mapping-btn {width:100%!important;min-width:0;min-height:44px;padding:10px 6px!important;font-size:16px!important;white-space:normal;overflow-wrap:anywhere}
 :root {
   --pocket-bg:#f5f6f2; --pocket-surface:#ffffff; --pocket-soft:#e9eeeb;
   --pocket-ink:#152f38; --pocket-muted:#4d6268; --pocket-line:#d6dfdc;
@@ -106,11 +116,10 @@ html body .control-screen .nav-circle-icon {width:60px!important;height:60px!imp
 .pocket-quick-actions img,.pocket-quick-actions svg {width:22px;height:22px}.pocket-quick-actions img {filter:brightness(.2)}html[data-theme=dark] .pocket-quick-actions img {filter:brightness(2)}
 .pocket-quick-actions button span {font-size:13px;line-height:16px;white-space:nowrap}
 .pocket-quick-actions img,.pocket-quick-actions svg,.control-screen .action-grid-btn svg {flex-shrink:0}
-.control-screen :is(.pocket-quick-actions,.action-grid-btn) {opacity:0;visibility:hidden;pointer-events:none;transition:opacity .18s,visibility .18s}
-.control-screen.drive-actions-visible :is(.pocket-quick-actions,.action-grid-btn) {opacity:1;visibility:visible}
-.control-screen.drive-actions-visible .action-grid-btn {pointer-events:auto}
+.control-screen :is(.pocket-quick-actions,.action-grid-btn) {opacity:1;visibility:visible}
+.control-screen .action-grid-btn {pointer-events:auto}
 /* Keep the quick row's transparent padding from intercepting Actions taps. */
-.control-screen.drive-actions-visible .pocket-quick-actions {pointer-events:none}
+.control-screen .pocket-quick-actions {pointer-events:none}
 /* The open menu owns the middle area; quick actions must not sit over its grid. */
 .control-screen:has(.action-popup) .pocket-quick-actions {opacity:0;visibility:hidden;pointer-events:none;transition:none}
 .control-screen:has(.action-popup) .operation-wrapper {z-index:30}
@@ -168,6 +177,21 @@ html body select {appearance:none;-webkit-appearance:none;display:block;width:10
 /* Saved demo stays in the same compact, tap-to-reveal action row. */
 .pocket-quick-actions .pocket-trick-or-treat span {white-space:normal;font-size:11px;line-height:12px;max-width:60px;text-align:center}
 .pocket-quick-actions button:disabled {opacity:.65}
+.parrot-panel {position:fixed;inset:0;margin:auto;width:min(460px,calc(100vw - 32px));max-height:calc(100dvh - 32px);overflow:auto;box-sizing:border-box;border:1px solid var(--pocket-line);border-radius:20px;padding:24px;background:var(--pocket-surface);color:var(--pocket-ink)}
+.parrot-panel::backdrop {background:#0009}
+.parrot-panel h2 {margin:0 0 12px}.parrot-panel p {line-height:1.4;margin:12px 0}
+.parrot-panel label {display:flex;flex-direction:column;gap:6px;margin:16px 0;font-weight:600}
+.parrot-panel output {display:block;overflow-wrap:anywhere;font-weight:400;line-height:1.4;padding:8px 0}
+.parrot-panel :is(select,input,button) {font:inherit;min-height:44px;padding:8px;border:1px solid var(--pocket-line);border-radius:8px;background:var(--pocket-surface);color:var(--pocket-ink);max-width:100%}
+.parrot-panel [role=status] {min-height:40px}.parrot-buttons {display:flex;gap:12px;justify-content:flex-end}.parrot-panel :disabled {opacity:.6}
+@media (max-height:450px) and (min-width:600px) {
+  .parrot-panel {width:min(700px,calc(100vw - 32px));padding:16px}
+  .parrot-panel h2 {font-size:20px;margin-bottom:6px}.parrot-panel p {font-size:14px;line-height:1.25;margin:6px 0}
+  .parrot-panel form {display:grid;grid-template-columns:1fr 1fr;gap:8px 16px}
+  .parrot-panel label {font-size:14px;margin:4px 0;min-width:0}
+  .parrot-panel :is(select,input,button) {font-size:14px;min-height:40px;padding:6px}
+  .parrot-panel [role=status] {align-self:center;min-height:0}.parrot-buttons {grid-column:1 / -1}
+}
 
 /* Compact translucent Drive controls; keep the glyphs fully opaque. */
 .control-screen .nav-bar :is(.back-btn,.nav-circle-icon),
@@ -204,3 +228,34 @@ body[data-platform=android] .control-screen .pip-camera {
   }
 }
 
+
+.mapping-explore-controls {display:grid;grid-template-columns:minmax(0,1fr);gap:8px;min-width:0}
+.mapping-explore-controls .mapping-btn {min-width:0;white-space:normal;overflow-wrap:anywhere}
+
+.mapping-start-check {display:flex;align-items:flex-start;gap:10px;font-size:15px;line-height:1.45;padding:8px 0;min-width:0}
+.mapping-start-check input {flex:0 0 22px;width:22px;height:22px;margin:0;accent-color:var(--pocket-accent)}
+
+/* Direct mapping access while keeping Drive as the normal control screen. */
+.pocket-map-shortcut {position:absolute;top:20px;left:max(90px,calc(env(safe-area-inset-left) + 90px));height:50px;padding:0 16px;border:1px solid var(--pocket-line);border-radius:16px;background:var(--pocket-surface);color:var(--pocket-ink);font:650 14px system-ui;z-index:20;pointer-events:auto}
+@media (orientation:landscape) and (max-height:600px) {.pocket-map-shortcut {top:10px;height:54px}}
+
+/* Map mode: landscape canvas with an optional instruction drawer. */
+body[data-screen=mapping] #app {height:100dvh!important;padding:0!important}
+body[data-screen=mapping] .pocket-tabbar,body[data-screen=mapping] .pocket-preview-banner {display:none!important}
+.mapping-screen .mapping-page {position:relative;overflow:hidden}
+.mapping-screen .page-header {flex-shrink:0;min-height:56px;padding:8px 16px!important}
+.mapping-screen .page-header h2 {font-size:20px}
+.mapping-screen .page-back-btn {width:40px;height:40px;min-height:40px;padding:10px}
+.mapping-screen .mapping-body {position:relative;display:block;overflow:hidden;min-height:0}
+.mapping-screen .mapping-viewport {position:absolute;inset:0;width:100%;height:100%;min-height:0}
+.mapping-screen .mapping-sidebar-right {position:absolute;inset:0 0 0 auto;width:min(380px,calc(100% - 56px))!important;max-width:100%;height:100%;overflow-y:auto;overscroll-behavior:contain;z-index:15;margin:0;border-left:1px solid var(--pocket-line);transform:translateX(100%);visibility:hidden;transition:transform .2s ease,visibility .2s}
+.mapping-screen .mapping-drawer-open .mapping-sidebar-right {transform:translateX(0);visibility:visible}
+.mapping-drawer-toggle {position:absolute;right:0;top:50%;transform:translateY(-50%);width:44px;height:76px;border:1px solid var(--pocket-line);border-radius:14px 0 0 14px;background:var(--pocket-surface);color:var(--pocket-ink);font-size:36px;z-index:16;cursor:pointer;transition:right .2s ease}
+.mapping-drawer-open .mapping-drawer-toggle {right:min(380px,calc(100% - 56px))}
+.mapping-screen .mapping-stepper {font-size:13px;padding:10px;gap:5px}
+.mapping-screen .mapping-sidebar-left {width:100%!important;max-height:400px;padding:0;overflow:auto}
+.mapping-sidebar-right > details > summary {padding:16px;font-weight:650;cursor:pointer}
+.mapping-screen .mapping-section {margin:8px;padding:14px!important}
+.mapping-screen .mapping-viewport .pip-camera {width:140px;height:86px;top:12px;left:12px}
+.mapping-screen .mapping-trace-legend {right:56px;font-size:10px}
+@media(prefers-reduced-motion:reduce) {.mapping-sidebar-right,.mapping-drawer-toggle {transition:none!important}}

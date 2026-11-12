@@ -39,7 +39,7 @@ export class Scene3D {
   // returns a real value.
   private static readonly INITIAL_ROBOT_POS = new THREE.Vector3(0, 0, -0.3);
 
-  constructor(canvas: HTMLCanvasElement) {
+  constructor(canvas: HTMLCanvasElement, private readonly compactView = false) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
     this.renderer.setPixelRatio(window.devicePixelRatio);
     this.renderer.shadowMap.enabled = true;
@@ -155,7 +155,7 @@ export class Scene3D {
     const yaw = new THREE.Euler().setFromQuaternion(this.robotModel.getQuaternion(), 'ZYX').z;
     const parent = this.renderer.domElement.parentElement;
     return lidarFrame(this.voxelMap.getBounds(), this.robotModel.getPosition(), yaw,
-      parent?.clientWidth || 852, parent?.clientHeight || 393, this.camera.fov);
+      parent?.clientWidth || 852, parent?.clientHeight || 393, this.camera.fov, !this.compactView);
   }
 
   /** Per-frame anchor for follow mode: keep the camera glued to the
@@ -196,6 +196,12 @@ export class Scene3D {
     this.controls.update();
     this.updatingCamera = false;
     this.renderer.render(this.scene, this.camera);
+  }
+
+  /** Small secondary views can stop rendering while collapsed or covered. */
+  setActive(active: boolean): void {
+    if (active && !this.animationId) { this.resize(); this.animate(); }
+    else if (!active && this.animationId) { cancelAnimationFrame(this.animationId); this.animationId = 0; }
   }
 
   destroy(): void {

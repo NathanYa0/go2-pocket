@@ -1,8 +1,11 @@
+import { DRIVE_SPEED_KEY, driveSpeedPercent, loadDriveSpeed, scaleDriveInput } from './drive-speed';
+import { rememberRobotAddress } from '../connection/auto-discovery';
 import { renderHome, renderTools } from '../mobile/home';
 import { preview } from '../mobile/platform';
 import { prepareRobotNetwork, releaseRobotNetwork, wifiSettings } from '../mobile/native-device';
 import type { ConnectionMode, ConnectionCallbacks, ConnectionConfig, ConnectionState, DataChannelMessage } from '../types';
 import { ConnectionPanel } from './connection-panel';
+import { explorationMotion } from './exploration-motion';
 import { Joystick } from './components/joystick';
 import { GamepadManager } from './components/gamepad-manager';
 import { NavBar } from './components/status-bar';
@@ -12,12 +15,15 @@ import { PipCamera } from './components/pip-camera';
 import { playLiveVideo, clearLiveVideo } from './components/video-playback';
 import { DriveViewport } from './components/drive-viewport';
 import { TrickOrTreat } from './trick-or-treat';
+import { Parrot } from './parrot';
+import { openParrotPanel } from './components/parrot-panel';
 import { EmergencyStop, type InputSource } from './components/side-buttons';
 import { SettingsDrawer } from './components/settings-drawer';
 import { StatusPage } from './components/status-page';
 import { ServicesPage, type ServiceEntry } from './components/services-page';
 import { SettingsPage, type SettingsState } from './components/settings-page';
 import { GO2_AUDIO_API, G1_AUDIO_API } from './components/audio-player';
+import { AutomaticMappingPage } from './components/automatic-mapping-page';
 import { MappingPage } from './components/mapping-page';
 import { TeachingPage, type TeachAction } from './components/teaching-page';
 import { AccountPage } from './components/account-page';
@@ -43,7 +49,7 @@ import { AudioRecorder, convertFileToWav } from './audio-recorder';
 import type { WebRTCConnection } from '../connection/webrtc';
 import type { Scene3D } from './scene/scene';
 
-type Screen = 'landing' | 'connection' | 'hub' | 'control' | 'status' | 'services' | 'settings' | 'app-settings' | 'mapping' | 'account' | 'bt' | 'errors' | 'teaching' | 'tools';
+type Screen = 'landing' | 'connection' | 'hub' | 'control' | 'status' | 'services' | 'settings' | 'app-settings' | 'mapping' | 'auto-mapping' | 'account' | 'bt' | 'errors' | 'teaching' | 'tools';
 
 /** Translate raw connector errors into user-facing messages. The G1
  *  RockChip accepts a single WebRTC client at a time — 429 on con_ing
@@ -86,6 +92,7 @@ export class App {
   private connectionTab = 'home';
   get mobileTab(): string {
     const screen = this.currentScreen;
+    if (screen === 'auto-mapping') return 'mapping';
     if (screen === 'connection') return this.connectionTab;
     if (screen === 'landing' || screen === 'hub') return 'home';
     return screen === 'control' || screen === 'mapping' ? screen : 'tools';
@@ -93,6 +100,9 @@ export class App {
   private mobileJoysticks: Joystick[] = [];
 
   mobileSuspend(): void {
+    this.mappingPage?.cancelAnchorReturn();
+    this.closeParrotPanel?.(); this.closeParrotPanel = null;
+    this.parrot?.cancel();
     this.trickOrTreat?.cancel();
     const wasControlling = this.joystickTimer !== null || this.activeSourceId !== null;
     this.joystickState = { lx: 0, ly: 0, rx: 0, ry: 0 };
@@ -106,10 +116,26 @@ export class App {
   }
 
   mobileNavigate(target: string): void {
+    if (this.automaticMappingPage?.running) { this.automaticMappingPage.stop(); return; }
+    if (target === 'auto-mapping') {
+      this.automaticMappingPage?.destroy();this.automaticMappingPage = null;
+      this.disconnect();
+      this.btStatusIcon?.setVisible(false);this.themeToggle?.setVisible(false);
+      this.accountStatusIcon?.setVisible(false);this.errorsBadgeFloating?.setVisible(false);
+      this.currentScreen = 'auto-mapping';
+      this.root.innerHTML = '';this.root.className = 'app-root mapping-screen';
+      this.automaticMappingPage = new AutomaticMappingPage(this.root, () => {
+        this.automaticMappingPage?.destroy();this.automaticMappingPage = null;this.showLandingScreen();
+      }, preview);
+      return;
+    }
+    if (this.automaticMappingPage) {
+      this.automaticMappingPage.destroy();this.automaticMappingPage = null;
+    }
     if (target === 'disconnect') { this.disconnect(); return; }
     const screen = this.currentScreen;
     if (!['landing','hub','connection'].includes(screen)) this.goToHub();
-    if (screen === 'connection') { this.connectionPanel?.destroy(); this.connectionPanel = null; }
+    if (screen === 'connection') { if (!this.webrtc) this.localConnectAbort?.abort(); this.connectionPanel?.destroy(); this.connectionPanel = null; }
     this.connectionTab = target === 'control' || target === 'mapping' ? target
       : target === 'home' || target === 'connection' ? 'home' : 'tools';
     if (!this.webrtc && !preview && !['home','tools','bt','account','app-settings','connection'].includes(target)) { this.showConnectionScreen(); return; }
@@ -135,6 +161,7 @@ export class App {
   private accountFromLanding = false;
 
   // Connection state (persists across screens)
+  private localConnectAbort: AbortController | null = null;
   private connectionPanel: ConnectionPanel | null = null;
   private webrtc: WebRTCConnection | null = null;
   private dataHandler: DataChannelHandler | null = null;
@@ -147,6 +174,10 @@ export class App {
   private controlUi: HTMLElement | null = null;
   private actionBar: ActionBar | null = null;
   private scene3d: Scene3D | null = null;
+  private latestLidarData: unknown = null;
+  private latestLidarAt = -Infinity;
+  private latestLocalRobotPose: unknown = null;
+  private latestLocalRobotPoseAt = -Infinity;
   private driveViewport: DriveViewport | null = null;
   private validationTimer: ReturnType<typeof setTimeout> | null = null;
   // Control-view chrome: the settings icon in the navbar opens this
@@ -162,6 +193,8 @@ export class App {
   /** In-flight audiohub requests keyed by request id → response resolver. */
   private audioPending = new Map<number, (data: unknown, code?: number) => void>();
   private trickOrTreat: TrickOrTreat | null = null;
+  private parrot: Parrot | null = null;
+  private closeParrotPanel: (() => void) | null = null;
   /** In-flight arm (G1 teaching) requests keyed by request id → resolver.
    *  Resolves with { code, data } so callers can branch on the status code. */
   private armPending = new Map<number, (r: { code: number; data: unknown }) => void>();
@@ -185,6 +218,7 @@ export class App {
   // APK-only Data > Remote Control and Data > Permission surfaces).
   private settingsPage: SettingsPage | null = null;
   private settingsState: SettingsState = {
+    driveSpeedPercent: loadDriveSpeed(),
     radarOn: false,
     lidarOn: true,
     volume: 0,
@@ -197,6 +231,7 @@ export class App {
     activeInputSourceId: null,
   };
   private mappingPage: MappingPage | null = null;
+  private automaticMappingPage: AutomaticMappingPage | null = null;
   private accountPage: AccountPage | null = null;
   private serviceEntries: ServiceEntry[] = [];
   private serviceReportTimer: ReturnType<typeof setInterval> | null = null;
@@ -500,6 +535,15 @@ export class App {
     }
     this.controlUi.appendChild(quick);
 
+    const maps = document.createElement('button');
+    maps.type = 'button';
+    maps.className = 'pocket-map-shortcut';
+    maps.textContent = 'Map';
+    maps.setAttribute('aria-label', 'Open mapping');
+    maps.addEventListener('click', () => this.mobileNavigate('mapping'));
+    this.controlUi.appendChild(maps);
+
+
     const demo = document.createElement('button');
     demo.type = 'button';
     demo.className = 'pocket-trick-or-treat';
@@ -545,6 +589,8 @@ export class App {
     const w2 = document.createElement('div');
     w2.className = 'wrapper-2';
     this.actionBar = new ActionBar(w2, (action) => {
+      if (action.localAction === 'parrot') { this.showParrot(); return; }
+      this.parrot?.cancel();
       this.trickOrTreat?.cancel();
       if (this.isEmergencyStopped()) { this.notifyEstopBlocked(); return; }
       if (!this.r1ClickGuard(action)) return;
@@ -682,6 +728,13 @@ export class App {
   private buildSettingsCallbacks() {
     return {
       family: cloudApi.connectFamily,
+      onDriveSpeedSet: (value: number) => {
+        const percent = driveSpeedPercent(value);
+        this.settingsState.driveSpeedPercent = percent;
+        try { localStorage.setItem(DRIVE_SPEED_KEY, String(percent)); } catch { /* private mode */ }
+        this.settingsPage?.setState({ driveSpeedPercent: percent });
+        this.settingsDrawer?.setState({ driveSpeedPercent: percent });
+      },
       onRadarToggle: (enabled: boolean) => this.sendRadarToggle(enabled),
       onLidarToggle: (enabled: boolean) => this.sendLidarToggle(enabled),
       onLampSet: (level: number) => this.sendLamp(level),
@@ -763,7 +816,12 @@ export class App {
     this.mappingPage = new MappingPage(
       this.root,
       () => this.goToHub(),
-      (topic, data) => this.dataHandler?.publish(topic, data),
+      (topic, data) => {
+        if (topic === RTC_TOPIC.USLAM_CMD && typeof data === 'string'
+          && /(^[^/]+\/start$|navigation\/set_goal_pose\/|control\/(stand_up|move_velocity)|^patrol\/go$)/.test(data)
+          && this.isEmergencyStopped()) { this.notifyEstopBlocked(); return; }
+        this.dataHandler?.publish(topic, data);
+      },
       (topic) => this.dataHandler?.subscribe(topic),
       (topic) => this.dataHandler?.unsubscribe(topic),
       (path, cb) => this.dataHandler?.requestFile(path, cb),
@@ -771,7 +829,27 @@ export class App {
         this.dataHandler
           ? this.dataHandler.pushFile(path, b64, 'uslam_final_pcd', 30 * 1024, onProgress)
           : Promise.reject(new Error('Data channel not ready')),
+      this.connectionConfig?.serialNumber || '',
+      state => {
+        const moving = Object.values(state).some(v => v !== 0);
+        if (moving && this.isEmergencyStopped()) { this.notifyEstopBlocked(); return; }
+        if (moving && this.webrtc?.channel?.readyState !== 'open') return;
+        this.dataHandler?.publish(RTC_TOPIC.WIRELESS_CONTROLLER, state);
+        if (!moving) this.dataHandler?.publishRequest(RTC_TOPIC.SPORT_MOD, SPORT_CMD.StopMove);
+      },
+      explorationMotion({
+        ready: () => !isG1Family(cloudApi.connectFamily) && !!this.dataHandler && this.webrtc?.channel?.readyState === 'open',
+        emergencyStopped: () => this.isEmergencyStopped(),
+        request: (api, parameter, priority) => this.dataHandler!.publishRequest(RTC_TOPIC.SPORT_MOD, api, parameter, { priority }),
+      }),
     );
+    const automatic = document.createElement('button');
+    automatic.textContent = 'Automatic mapping (DimOS)';
+    automatic.className = 'mapping-btn';
+    automatic.addEventListener('click', () => this.mobileNavigate('auto-mapping'));
+    this.root.querySelector('.mapping-header-cluster')?.prepend(automatic);
+    this.mappingPage.setLiveLidar(this.latestLidarData, this.latestLidarAt);
+    this.mappingPage.setLiveRobotPose(this.latestLocalRobotPose, this.latestLocalRobotPoseAt);
     // Seed the battery widget with the last-known value so it's not blank
     // until the next LOW_STATE message arrives.
     if (this.robotState.batteryPercent > 0) {
@@ -1058,7 +1136,7 @@ export class App {
           this.joystickReleaseTicks--;
         }
         if (this.isEmergencyStopped()) { this.notifyEstopBlocked(); this.joystickReleaseTicks = 0; return; }
-        this.dataHandler?.publish(RTC_TOPIC.WIRELESS_CONTROLLER, { lx, ly, rx, ry, keys });
+        this.dataHandler?.publish(RTC_TOPIC.WIRELESS_CONTROLLER, scaleDriveInput({ lx, ly, rx, ry, keys }, isG1Family(cloudApi.connectFamily) ? 100 : this.settingsState.driveSpeedPercent ?? 100));
         return;
       }
       // BT relay subscribes to remote_state and publishes itself, so skip.
@@ -1075,7 +1153,7 @@ export class App {
         this.joystickReleaseTicks--;
       }
       if (this.isEmergencyStopped()) { this.notifyEstopBlocked(); this.joystickReleaseTicks = 0; return; }
-      this.dataHandler?.publish(RTC_TOPIC.WIRELESS_CONTROLLER, { lx, ly, rx, ry });
+      this.dataHandler?.publish(RTC_TOPIC.WIRELESS_CONTROLLER, scaleDriveInput({ lx, ly, rx, ry }, isG1Family(cloudApi.connectFamily) ? 100 : this.settingsState.driveSpeedPercent ?? 100));
     }, 50);
   }
 
@@ -1162,9 +1240,9 @@ export class App {
           else if (this.btReleaseTicks > 0) this.btReleaseTicks--;
           else return;
           if (this.isEmergencyStopped()) { this.notifyEstopBlocked(); return; }
-          this.dataHandler.publish(RTC_TOPIC.WIRELESS_CONTROLLER, {
+          this.dataHandler.publish(RTC_TOPIC.WIRELESS_CONTROLLER, scaleDriveInput({
             lx: s.lx, ly: s.ly, rx: s.rx, ry: s.ry, keys,
-          });
+          }, isG1Family(cloudApi.connectFamily) ? 100 : this.settingsState.driveSpeedPercent ?? 100));
         });
       }
       // Gamepad path: startJoystickLoop reads gamepadManager.currentState directly.
@@ -1633,6 +1711,8 @@ export class App {
   }
 
   private handleRobotOdom(data: unknown): void {
+    this.latestLocalRobotPose = data;this.latestLocalRobotPoseAt = performance.now();
+    this.mappingPage?.setLiveRobotPose(data, this.latestLocalRobotPoseAt);
     if (!this.scene3d) return;
     const d = data as { pose?: { pose?: { position?: { x: number; y: number; z: number }; orientation?: { x: number; y: number; z: number; w: number } } } };
     const pose = d.pose?.pose;
@@ -1646,13 +1726,19 @@ export class App {
       progress?: number;
       position?: number[];
       velocity?: number[];
-      imu_state?: { quaternion?: number[] };
+      body_height?: number;
+      imu_state?: { quaternion?: number[]; rpy?: number[] };
       mode?: number;
       fsm_id?: number;
       gait_type?: number;
       error_code?: number;
     };
     this.trickOrTreat?.danceProgress(d.progress);
+    this.mappingPage?.setExplorationMotion({
+      bodyHeight: d.body_height ?? NaN,
+      speed: d.velocity?.length === 3 ? Math.hypot(d.velocity[0], d.velocity[1]) : NaN,
+      roll: d.imu_state?.rpy?.[0] ?? NaN, pitch: d.imu_state?.rpy?.[1] ?? NaN,
+    });
 
     // G1 publishes the current locomotion state in `fsm_id` rather than
     // `mode`. Without this fallback the OperaBar would never learn the
@@ -1700,8 +1786,10 @@ export class App {
   }
 
   private handleLidarData(data: unknown): void {
-    if (!this.scene3d) return;
-    this.scene3d.voxelMap.processCompressed(data);
+    this.latestLidarData = data;
+    this.latestLidarAt = performance.now();
+    this.mappingPage?.setLiveLidar(data, this.latestLidarAt);
+    this.scene3d?.voxelMap.processCompressed(data);
   }
 
   private handleVuiResponse(data: unknown): void {
@@ -2197,6 +2285,7 @@ export class App {
       return;
     }
     if (!state) return;
+    this.parrot?.playbackState(state);
     this.trickOrTreat?.playbackState(state);
     this.settingsPage?.setAudioPlayState(state);
     this.settingsDrawer?.setAudioPlayState(state);
@@ -2352,6 +2441,36 @@ export class App {
     });
   }
 
+  private showParrot(): void {
+    if (this.parrot?.busy) { this.notifyBlocked('Parrot is finishing. Please wait.'); return; }
+    this.mobileSuspend();
+    if (this.isEmergencyStopped()) { this.notifyEstopBlocked(); return; }
+    const sn = this.connectionConfig?.serialNumber;
+    if (!sn && !preview) { this.notifyBlocked('Reconnect using your Go2 serial number before using Parrot.'); return; }
+    const storageKey = `go2_parrot_v1_${sn || 'preview'}`;
+    this.parrot = new Parrot({
+      request: (api, payload) => this.publishAudioRequest(api, payload, true),
+      upload: (wav, name, check) => this.uploadWavToLibrary(wav, name, undefined, check),
+      recorder: () => {
+        const stream = this.audioEl?.srcObject;
+        if (!(stream instanceof MediaStream) || !stream.getAudioTracks().some(track => track.readyState === 'live' && track.enabled)) {
+          throw new Error('Go2 microphone audio is unavailable. Reconnect to the robot.');
+        }
+        return new AudioRecorder(stream, 5, true);
+      },
+      available: () => !preview && !!this.dataHandler && !!this.webrtc && this.currentScreen === 'control' && !this.isEmergencyStopped(),
+      save: settings => localStorage.setItem(storageKey, JSON.stringify(settings)),
+      state: label => {
+        const status = document.querySelector('.parrot-panel [role=status]');
+        if (status) status.textContent = label;
+      },
+    });
+    this.closeParrotPanel = openParrotPanel({
+      storageKey, parrot: this.parrot,
+      list: () => preview ? Promise.resolve({ audio_list: [] }) : this.publishAudioRequest(1001, '{}', true),
+    });
+  }
+
   private async handleAudioUpload(file: File, onProgress?: (pct: number) => void): Promise<void> {
     if (!this.dataHandler) return;
 
@@ -2500,6 +2619,7 @@ export class App {
   // ── Connection ──
 
   private onConnectionValidated(config: ConnectionConfig): void {
+    if (config.mode === 'STA-L') rememberRobotAddress(localStorage, config.ip, config.serialNumber || '');
     this.connectionPanel?.setStatus('Connected', 'success');
     if (this.validationTimer) clearTimeout(this.validationTimer);
     this.validationTimer = setTimeout(() => {
@@ -2518,17 +2638,23 @@ export class App {
       return;
     }
 
+    this.localConnectAbort?.abort();
+    const attempt = new AbortController(); this.localConnectAbort = attempt;
     this.connectionConfig = config;
     this.connectionPanel?.setConnecting(true);
     this.connectionPanel?.setStatus('Connecting...', 'info');
 
+    const pendingMessages: DataChannelMessage[] = [];
     const callbacks: ConnectionCallbacks = {
-      onStateChange: (state: ConnectionState) => this.onStateChange(state),
-      onValidated: () => this.onConnectionValidated(config),
+      onStateChange: (state: ConnectionState) => { if (!attempt.signal.aborted) this.onStateChange(state); },
+      onValidated: () => { if (!attempt.signal.aborted) this.onConnectionValidated(config); },
       onMessage: (msg: DataChannelMessage) => {
+        if (attempt.signal.aborted) return;
         if (this.dataHandler) this.dataHandler.handleMessage(msg);
+        else pendingMessages.push(msg);
       },
       onVideoTrack: (stream: MediaStream) => {
+        if (attempt.signal.aborted) return;
         this.videoStream = stream;
         this.pipCamera?.setStream(stream);
         this.mappingPage?.setStream(stream);
@@ -2540,6 +2666,7 @@ export class App {
         }
       },
       onAudioTrack: (stream: MediaStream) => {
+        if (attempt.signal.aborted) return;
         if (!this.audioEl) {
           this.audioEl = document.createElement('audio');
           this.audioEl.style.cssText = 'position:absolute;width:0;height:0;opacity:0;';
@@ -2549,30 +2676,40 @@ export class App {
       },
     };
 
-    const onStep = (msg: string) => this.connectionPanel?.setStatus(msg, 'info');
+    const onStep = (msg: string) => { if (!attempt.signal.aborted) this.connectionPanel?.setStatus(msg, 'info'); };
 
     try {
+      let established: WebRTCConnection;
       if (config.mode === 'STA-T') {
         await releaseRobotNetwork();
         // Remote: kick off WebRTC immediately — same UX as Local/AP. The
         // hub is shown in the onValidated callback.
         if (!config.token) throw new Error('Not logged in');
         if (!config.serialNumber) throw new Error('No robot selected');
-        this.webrtc = await connectRemote(config.serialNumber, config.token, callbacks, onStep);
+        established = await connectRemote(config.serialNumber, config.token, callbacks, onStep);
       } else {
-        if (!config.ip) throw new Error('IP address required');
+        if (config.mode === 'AP' && !config.ip) throw new Error('IP address required');
         await prepareRobotNetwork();
-        this.webrtc = await connectLocal(config.ip, config.mode, callbacks, onStep, {
+        established = await connectLocal(config.ip, config.mode, callbacks, onStep, {
           sn: config.serialNumber,
+          signal: attempt.signal,
+          onResolved: robot => {
+            config.ip = robot.ip; config.serialNumber = robot.sn;
+            this.connectionPanel?.showResolvedRobot(robot.ip, robot.sn);
+          },
           promptKey: (sn, opts) => promptAesKey(sn, opts),
         });
       }
+      if (attempt.signal.aborted || this.localConnectAbort !== attempt) { established.close(); return; }
+      this.webrtc = established;
       this.dataHandler = new DataChannelHandler(this.webrtc, callbacks);
       // Wire the error-message handler immediately — the robot sends its first
       // "errors" snapshot the same tick as "Validation Ok.", which is BEFORE
       // the onValidated callback runs. Don't wait for validation here.
       this.dataHandler.onErrorMessage = (type, data) => this.errorStore.applyWireMessage(type, data);
+      for (const msg of pendingMessages) this.dataHandler.handleMessage(msg);
     } catch (err) {
+      if (attempt.signal.aborted) return;
       const raw = err instanceof Error ? err.message : 'Connection failed';
       const message = config.mode === 'AP' && /not responding|fetch|timeout|network/i.test(raw)
         ? `Cannot reach Go2. Join its hotspot in ${wifiSettings}, then try Connect again.`
@@ -2629,6 +2766,8 @@ export class App {
   private sendStop(active: boolean): void {
     this.emergencyStopped = active;
     if (!active) return;
+    this.closeParrotPanel?.(); this.closeParrotPanel = null;
+    this.parrot?.cancel();
     this.trickOrTreat?.cancel();
     // E-stop sends a priority Damp request. For G1/R1 the damp command
     // is encoded as api_id=7101 (G1State) with parameter {"data":1};
@@ -2825,6 +2964,9 @@ export class App {
   }
 
   private disconnect(): void {
+    this.latestLidarData = null;this.latestLidarAt = -Infinity;
+    this.latestLocalRobotPose = null;this.latestLocalRobotPoseAt = -Infinity;
+    this.localConnectAbort?.abort(); this.localConnectAbort = null;
     if (this.validationTimer) { clearTimeout(this.validationTimer); this.validationTimer = null; }
     this.mobileSuspend();
     this.driveViewport?.destroy(); this.driveViewport = null;
@@ -2876,6 +3018,7 @@ export class App {
     this.appSettingsPage = null;
     this.serviceEntries = [];
     this.settingsState = {
+      driveSpeedPercent: loadDriveSpeed(),
       radarOn: false, lidarOn: true, volume: 0, brightness: 0, waistLocked: false,
       remoteSwitchOn: false, remoteId: '', internetRemoteOn: false,
       inputSources: [], activeInputSourceId: null,

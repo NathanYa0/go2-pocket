@@ -1,3 +1,5 @@
+import { DENOISE_WORKLET_CODE } from './audio-denoise-worklet';
+
 const MAX_DURATION = 60_000;  // 60 seconds
 const MIN_DURATION = 500;     // 500 ms
 const SAMPLE_RATE = 16_000;
@@ -98,6 +100,7 @@ registerProcessor('recorder-processor', RecorderProcessor);
 `;
 
 export class AudioRecorder {
+  constructor(private inputStream?: MediaStream, private recordingGain = 1, private noiseReduction = false) {}
   private audioContext: AudioContext | null = null;
   private workletNode: AudioWorkletNode | null = null;
   private sourceNode: MediaStreamAudioSourceNode | null = null;
@@ -106,19 +109,40 @@ export class AudioRecorder {
   private pcmData: Int16Array[] = [];
   private startTime = 0;
   private destroyed = false;
+  private significantSound = false;
+
+  /** Activity since the last check, measured before playback gain. */
+  takeSignificantSound(): boolean {
+    const heard = this.significantSound;
+    this.significantSound = false;
+    return heard;
+  }
 
   async start(): Promise<void> {
+    if (this.destroyed) throw new Error('Recording cancelled.');
     if (this.recording) return;
 
     try {
-      this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (this.inputStream) {
+        const tracks = this.inputStream.getAudioTracks().filter(track => track.readyState === 'live' && track.enabled);
+        if (!tracks.length) throw new Error('Go2 microphone is unavailable. Reconnect to the robot.');
+        // Own only clones: stopping this recording must not stop Listen/WebRTC.
+        this.stream = new MediaStream(tracks.map(track => track.clone()));
+      } else {
+        this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      }
+      if (this.destroyed) {
+        this.stream.getTracks().forEach(track => track.stop()); this.stream = null;
+        throw new Error('Recording cancelled.');
+      }
       const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({
         sampleRate: SAMPLE_RATE,
       });
       this.audioContext = audioContext;
+      await audioContext.resume();
 
       // Load the worklet module from a blob URL.
-      const blob = new Blob([WORKLET_CODE], { type: 'application/javascript' });
+      const blob = new Blob([this.noiseReduction ? DENOISE_WORKLET_CODE : WORKLET_CODE], { type: 'application/javascript' });
       const url = URL.createObjectURL(blob);
       try {
         await audioContext.audioWorklet.addModule(url);
@@ -126,12 +150,17 @@ export class AudioRecorder {
         URL.revokeObjectURL(url);
       }
       // start() may have been cancelled (destroyed) while awaiting.
-      if (this.destroyed) return;
+      if (this.destroyed) {
+        this.stream?.getTracks().forEach(track => track.stop()); this.stream = null;
+        void audioContext.close().catch(() => {}); this.audioContext = null;
+        throw new Error('Recording cancelled.');
+      }
 
       this.sourceNode = audioContext.createMediaStreamSource(this.stream);
-      this.workletNode = new AudioWorkletNode(audioContext, 'recorder-processor');
+      this.workletNode = new AudioWorkletNode(audioContext, this.noiseReduction ? 'denoise-recorder' : 'recorder-processor');
 
       this.pcmData = [];
+      this.significantSound = false;
       this.recording = true;
       this.startTime = Date.now();
 
@@ -142,9 +171,13 @@ export class AudioRecorder {
           return;
         }
         const inputData = event.data as Float32Array;
+        // -46 dBFS RMS: ignore low-level noise, independently of the 5x boost.
+        let energy = 0;
+        for (const sample of inputData) energy += sample * sample;
+        if (inputData.length && Math.sqrt(energy / inputData.length) >= 0.005) this.significantSound = true;
         const int16Data = new Int16Array(inputData.length);
         for (let i = 0; i < inputData.length; i++) {
-          int16Data[i] = Math.max(-32768, Math.min(32767, inputData[i] * 32768));
+          int16Data[i] = Math.max(-32768, Math.min(32767, inputData[i] * this.recordingGain * 32768));
         }
         this.pcmData.push(int16Data);
       };
@@ -163,13 +196,15 @@ export class AudioRecorder {
     if (!this.recording) return null;
 
     const duration = Date.now() - this.startTime;
+    const sourceEnded = this.inputStream && !this.inputStream.getAudioTracks().some(track => track.readyState === 'live');
     this.recording = false;
 
     this.workletNode?.disconnect();
     this.sourceNode?.disconnect();
     this.stream?.getTracks().forEach(track => track.stop());
 
-    if (duration < MIN_DURATION) {
+    if (duration < MIN_DURATION || sourceEnded
+      || (this.inputStream && !this.pcmData.some(block => block.some(sample => Math.abs(sample) > 2)))) {
       this.audioContext?.close().catch(() => {});
       return null;
     }

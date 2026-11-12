@@ -49,6 +49,31 @@ The on-board module exposes ~56 commands across 8 namespaces (`mapping`, `locali
 | 3D viewport | Three.js scene + draggable PiP video feed |
 | Right sidebar | Step 1: Mapping, Step 2: Localization, Step 3: Navigation (Goal/Patrol tabs), Autocharge |
 
+## Saved anchor and return (initial implementation)
+
+In **Maps → Step 3: Navigation**, **Set Anchor Here** stores the live localized
+position and heading, scoped to the connected robot's serial number and active
+map ID. The anchor persists in local browser/phone storage across sessions;
+it is not uploaded with map ZIPs or synchronized between devices.
+
+**Return to Anchor** confirms the robot's current map and localization, checks
+that mapping, patrol and auto-charge are stopped, starts the existing navigation
+service, waits for active navigation status, then sends the anchor as a goal.
+There is no Point-LIO dependency or new path planner. A received localization
+pose must be less than 1.5 seconds old; mapping odometry cannot set an anchor.
+
+**Stop Return**, leaving Maps, app suspension, stale/lost localization, map
+changes, navigation failures and a 60-second timeout cancel the return. A
+reported arrival is checked against 30 cm position / 15° heading tolerances.
+These are initial software thresholds, not measured accuracy guarantees.
+
+To test: map/save/localize, set the anchor, manually drive elsewhere, reopen
+Maps and verify the displayed position, then request return. Picking up Go2
+requires successful relocalization before return. Physical navigation behavior
+and firmware compatibility still need validation. Map coverage, unknown-space
+handling and collision avoidance remain responsibilities of Go2's planner;
+this feature does not independently certify a route as safe.
+
 ## Topics
 
 Constants are defined in [src/protocol/topics.ts](../src/protocol/topics.ts).
@@ -327,3 +352,28 @@ All Promise-based, 2 s timeout, single-resolver pattern matching the APK:
 | [src/protocol/data-channel.ts](../src/protocol/data-channel.ts) | `requestFile` (download) + `pushFile` (chunked upload) |
 | [src/protocol/topics.ts](../src/protocol/topics.ts) | `RTC_TOPIC.USLAM_*` constants |
 
+
+## Nearby live LiDAR alongside the room map
+
+During mapping or while viewing a saved room map, a collapsible **Nearby LiDAR**
+pane appears at the lower left. It reuses Drive's `Scene3D`/`VoxelMap` renderer
+and compressed `rt/utlidar/voxel_map_compressed` feed. Its robot marker uses the
+local `rt/utlidar/robot_pose` frame (PoseStamped or nested Odometry accepted).
+The main scene retains USLAM points, robot pose, saved map, history and planning.
+
+The panes have independent coordinates and cameras. The live feed is not
+superimposed on the room map and does not enter exploration perception or alter
+automatic obstacle checks. Matching `odom` frame names alone is not evidence of
+identical frame origins after service resets.
+
+Hide/show is available in the pane header; opening the directions drawer also
+hides and suspends its rendering. It does not duplicate the full live view when
+Map is idle without a loaded map. After two seconds without an incoming live
+packet, the pane dims and labels its last view as not updating; this is a display
+indicator and does not change the robot's LiDAR timeout or motion policy.
+Renderer and worker cleanup run when leaving the map page. The secondary camera
+uses the full canvas rather than reserving Drive's joystick margins.
+
+Verification with a dev server: `npm run check:map-live`. Synthetic browser checks
+cover routing/coordinate isolation, fresh/stale states, saved/idle contexts,
+collapse/drawer rendering suspension, cleanup, and desktop/phone bounds.

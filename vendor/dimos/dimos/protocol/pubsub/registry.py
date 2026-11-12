@@ -1,0 +1,163 @@
+# Copyright 2025-2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Pubsub URI registry: ``"<proto>:<topic>[#<msg_type>]"`` -> ``PubSubTransport``.
+
+Maps user-facing protocol names onto the concrete transport classes in
+``dimos.core.transport``. Used by CLIs and config files that need to accept
+a single string describing both how and where to subscribe.
+
+URI grammar::
+
+    <proto>:<topic>[#<msg_type>]
+
+- ``<proto>``: registry key: ``zenoh``, ``pzenoh``, ``lcm``, ``jpeg_lcm``, ``plcm``.
+- ``<topic>``: channel/key, passed verbatim to the transport constructor.
+- ``<msg_type>``: optional ``module.ClassName`` resolved via
+  ``dimos.msgs.helpers.resolve_msg_type`` (e.g. ``sensor_msgs.Image``).
+
+Typed protos (``zenoh``, ``lcm``, ``jpeg_lcm``) require a message type — either from
+the ``#``-suffix or the ``msg_type`` kwarg. Untyped protos (``pzenoh``, ``plcm``)
+carry CBOR-encoded Python values and don't. Zenoh topics include the namespace, e.g. ``zenoh:dimos/color_image``;
+the typed transport appends the message type to the wire key.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from dimos.core.transport import PubSubTransport
+
+
+def _make_lcm(topic: str, msg_type: type | None) -> Any:
+    if msg_type is None:
+        raise ValueError("proto 'lcm' requires a message type (URI '#suffix' or msg_type kwarg)")
+    from dimos.core.transport import LCMTransport
+
+    return LCMTransport(topic, msg_type)
+
+
+def _make_jpeg_lcm(topic: str, msg_type: type | None) -> Any:
+    if msg_type is None:
+        raise ValueError(
+            "proto 'jpeg_lcm' requires a message type (URI '#suffix' or msg_type kwarg)"
+        )
+    from dimos.core.transport import JpegLcmTransport
+
+    return JpegLcmTransport(topic, msg_type)
+
+
+def _make_plcm(topic: str, msg_type: type | None) -> Any:
+    # untyped LCM: the CBOR payload names its own type, no type registration needed.
+    from dimos.core.transport import pLCMTransport
+
+    return pLCMTransport(topic)
+
+
+def _make_zenoh(topic: str, msg_type: type | None) -> Any:
+    if msg_type is None:
+        raise ValueError("proto 'zenoh' requires a message type (URI '#suffix' or msg_type kwarg)")
+    from dimos.core.transport import ZenohTransport
+
+    return ZenohTransport(topic, msg_type)
+
+
+def _make_pzenoh(topic: str, msg_type: type | None) -> Any:
+    from dimos.core.transport import pZenohTransport
+
+    return pZenohTransport(topic)
+
+
+_REGISTRY: dict[str, Callable[[str, type | None], Any]] = {
+    "lcm": _make_lcm,
+    "jpeg_lcm": _make_jpeg_lcm,
+    "plcm": _make_plcm,
+    "zenoh": _make_zenoh,
+    "pzenoh": _make_pzenoh,
+}
+
+
+def supported_protos() -> list[str]:
+    """Return the sorted list of registered proto names."""
+    return sorted(_REGISTRY.keys())
+
+
+def parse_pubsub_uri(uri: str) -> tuple[str, str, str | None]:
+    """Split ``"<proto>:<topic>[#<msg_type>]"`` into its three parts.
+
+    Returns ``(proto, topic, msg_type_name_or_None)``. Raises ``ValueError``
+    on malformed input or an unknown proto.
+    """
+    if ":" not in uri:
+        raise ValueError(
+            f"Invalid pubsub URI {uri!r}: expected '<proto>:<topic>'. "
+            f"Supported protos: {supported_protos()}"
+        )
+    proto, rest = uri.split(":", 1)
+    if not proto:
+        raise ValueError(f"Invalid pubsub URI {uri!r}: empty proto")
+    if proto not in _REGISTRY:
+        raise ValueError(f"Unsupported proto {proto!r}; supported: {supported_protos()}")
+    msg_type_name: str | None
+    if "#" in rest:
+        topic, suffix = rest.split("#", 1)
+        msg_type_name = suffix or None
+    else:
+        topic, msg_type_name = rest, None
+    if not topic:
+        raise ValueError(f"Invalid pubsub URI {uri!r}: empty topic")
+    return proto, topic, msg_type_name
+
+
+def make_pubsub_transport(
+    uri: str,
+    *,
+    msg_type: type | None = None,
+) -> PubSubTransport[Any]:
+    """Build a ``PubSubTransport`` from a URI (does not call ``start()``).
+
+    The ``#``-suffix in the URI wins over the ``msg_type`` kwarg if both are
+    present. Untyped (self-describing) protos ignore ``msg_type``.
+    """
+    proto, topic, msg_type_name = parse_pubsub_uri(uri)
+    resolved = msg_type
+    if msg_type_name is not None:
+        from dimos.msgs.helpers import resolve_msg_type
+
+        resolved = resolve_msg_type(msg_type_name)
+        if resolved is None:
+            raise ValueError(f"Could not resolve message type {msg_type_name!r} from URI {uri!r}")
+    transport: PubSubTransport[Any] = _REGISTRY[proto](topic, resolved)
+    return transport
+
+
+def subscribe_pubsub_uri(
+    uri: str,
+    callback: Callable[[Any], Any],
+    *,
+    msg_type: type | None = None,
+) -> tuple[PubSubTransport[Any], Callable[[], None]]:
+    """Construct + start + subscribe in one step.
+
+    Returns ``(transport, unsubscribe)``. The caller is responsible for
+    calling ``transport.stop()`` (and ``unsubscribe()`` if it needs to stop
+    receiving messages before the transport itself stops).
+    """
+    transport = make_pubsub_transport(uri, msg_type=msg_type)
+    transport.start()
+    unsub = transport.subscribe(callback)
+    return transport, unsub

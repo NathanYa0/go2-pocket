@@ -88,7 +88,7 @@ export class ConnectionPanel {
       <div class="form-group" id="ip-group">
         <label for="ip-input">Robot IP Address</label>
         <div class="ip-row">
-          <input type="text" id="ip-input" placeholder="Robot IP on your home Wi-Fi" inputmode="decimal" />
+          <input type="text" id="ip-input" placeholder="Automatic — leave blank to find your dog" inputmode="decimal" />
           <button id="scan-btn" class="btn-scan" title="Find Go2 on your network">Find Go2</button>
         </div>
         <div id="scan-results" class="scan-results" style="display:none;"></div>
@@ -128,6 +128,11 @@ export class ConnectionPanel {
       if (this.ipInput.value === DEFAULT_AP_IP) this.ipInput.value = '';
       this.localIp = this.ipInput.value;
       this.discoveredSn = localStorage.getItem('unitree_last_sn_go2') || '';
+      const addresses = JSON.parse(localStorage.getItem('unitree_robot_addresses_v1') || '{}');
+      if (typeof addresses?.[this.discoveredSn] === 'string') {
+        this.ipInput.value = addresses[this.discoveredSn];
+        this.localIp = this.ipInput.value;
+      }
     } catch { /* ignore */ }
 
     this.modeSelect.addEventListener('change', () => {
@@ -263,6 +268,7 @@ export class ConnectionPanel {
   }
 
   private handleConnect(): void {
+    if (this.connectBtn.disabled || this.scanBtn.disabled) return;
     const mode = this.modeSelect.value as ConnectionMode;
 
     if (mode === 'STA-T') {
@@ -286,7 +292,7 @@ export class ConnectionPanel {
     } else {
       const ip = this.ipInput.value.trim();
       // Keep the home IP when connecting to the fixed hotspot address.
-      if (ip && mode === 'STA-L') try { localStorage.setItem('unitree_last_ip_go2', ip); } catch { /* ignore */ }
+      // Remember an address only after authenticated validation in App.
       // The discovered or cloud-bound serial selects Go2's cached device key.
       const typedSn = this.discoveredSn;
       const familyDevs = this.devices.filter((d) => d.series.toUpperCase() === cloudApi.connectFamily.toUpperCase());
@@ -321,17 +327,13 @@ export class ConnectionPanel {
     if (typedSn) targetSns.add(typedSn);
 
     try {
-      // Fire the broadcast and every per-SN scan in parallel; aggregate
-      // and dedupe by SN. Each branch swallows its own errors so a
-      // single network blip doesn't sink the whole run.
-      const branches: Array<Promise<ScanResult[]>> = [
-        scanForRobots(cloudApi.connectFamily, (msg) => { if (generation === this.scanGeneration) this.setStatus(msg, 'info'); }),
-        ...Array.from(targetSns).map((sn) =>
-          scanForRobots(cloudApi.connectFamily, undefined, sn).catch(() => [] as ScanResult[]),
-        ),
-      ];
+      // Run scans in sequence; they share a single UDP reply port.
+      const all: ScanResult[][] = [];
+      for (const sn of [...targetSns, undefined]) {
+        if (generation !== this.scanGeneration) return;
+        all.push(await scanForRobots(cloudApi.connectFamily, undefined, sn));
+      }
       const seen = new Map<string, ScanResult>();
-      const all = await Promise.all(branches);
       if (generation !== this.scanGeneration) return;
       for (const batch of all) {
         for (const r of batch) {
@@ -411,8 +413,17 @@ export class ConnectionPanel {
     } catch { /* ignore */ }
   }
 
+  showResolvedRobot(ip: string, sn: string): void {
+    this.ipInput.value = ip;
+    this.discoveredSn = sn;
+  }
+
   setConnecting(connecting: boolean): void {
     this.connectBtn.disabled = connecting;
+    this.scanBtn.disabled = connecting;
+    this.modeSelect.disabled = connecting;
+    this.ipInput.disabled = connecting;
+    this.robotSelect.disabled = connecting;
     this.connectBtn.textContent = connecting ? 'Connecting...' : 'Connect';
   }
 

@@ -2,7 +2,8 @@
 
 An independent iPhone and Android app for the Unitree Go2, built with
 TypeScript, Three.js, WebRTC and Capacitor. The mobile apps connect directly to
-the robot; a Mac or desktop relay is not required during use.
+the robot for Drive, actions and camera. The optional automatic room mapper
+runs on a Mac and is controlled from the same app interface.
 
 Based on [legion1581/unitree_ui](https://github.com/legion1581/unitree_ui).
 This is a community project, not the official Unitree app or SDK.
@@ -18,6 +19,7 @@ This is a community project, not the official Unitree app or SDK.
 - LiDAR/SLAM, mapping, navigation, patrol and docking interfaces, subject to
   robot firmware and available hardware.
 - Local map storage, import/export and native file sharing.
+- Integrated Mac automatic exploration with DimOS, live 3D maps, pause/stop and saved-map viewing.
 - Dance 1 with a saved Trick or Treat recording, including audio-loop cleanup.
 
 Robot firmware determines which functions actually work. No automatic charging
@@ -46,6 +48,23 @@ npm run dev
 
 The optional `server/` helpers are for desktop/browser development. Native
 iPhone and Android builds use their own networking and Bluetooth integrations.
+
+## Automatic room mapping on Mac
+
+The mapping engine source now lives in `vendor/dimos`, with its app integration in
+`integrations/dimos`. No separate repository checkout or viewer is required.
+
+```sh
+brew install uv portaudio libsndfile git-lfs
+npm run mapping:setup
+npm run dev
+```
+
+Open **Home → Maps**, then **Start new map → Explore** while supervising Go2.
+**Stop & Save** finishes the session and adds the map to the app's library.
+Keep the robot IP and AES key in your local `.env`. Mapping requires the Mac;
+the standalone phone installation cannot launch the Python engine.
+See [setup, operation and verification](integrations/dimos/README.md).
 
 ## iPhone
 

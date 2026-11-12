@@ -4,10 +4,12 @@ import './mobile/device-preview.css';
 import { installDevicePreview } from './mobile/device-preview';
 import { installPlatform } from './mobile/platform';
 import { installShell } from './mobile/shell';
+import { importDeviceSetup } from './mobile/import-device-setup';
 
 async function main() {
   if (installDevicePreview()) return;
   await installPlatform();
+  await importDeviceSetup();
   if (!localStorage.getItem('unitree_region')) localStorage.setItem('unitree_region','cn');
   if (!localStorage.getItem('go2ui.theme')) localStorage.setItem('go2ui.theme','light');
   if (!localStorage.getItem('unitree_ui.consoleLog.enabled')) localStorage.setItem('unitree_ui.consoleLog.enabled','false');

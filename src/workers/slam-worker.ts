@@ -63,6 +63,9 @@ class SlamProcessor {
     zmin: number, zmax: number,
     inputData: Uint8Array,
   ): { output: Float32Array; directOutput: Float32Array; outputCount: number; directCount: number } {
+    if (inputData.length === 0 || inputData.length > 150_000 || inputData.length % 6
+      || ![xmin, xmax, ymin, ymax, zmin, zmax].every(Number.isFinite)
+      || xmin > xmax || ymin > ymax || zmin > zmax) throw new Error('Unsupported mapping cloud size or bounds');
     // Refresh heap view
     this.heap = new Uint8Array(this.exports.b.buffer);
     this.heap.set(inputData, this._input);
@@ -137,7 +140,7 @@ self.addEventListener('message', (e: MessageEvent) => {
     return;
   }
 
-  const msg = e.data as { type: string; data: Record<string, unknown> };
+  const msg = e.data as { type: string; sessionId?: string; capturedAt?: number; frame?: string; data: Record<string, unknown> };
 
   if (msg.type === 'newMap') {
     const d = msg.data;
@@ -147,7 +150,7 @@ self.addEventListener('message', (e: MessageEvent) => {
       d.zmin as number, d.zmax as number,
       new Uint8Array(d.data as ArrayBuffer),
     );
-    self.postMessage({ type: 'newMap', data: result });
+    self.postMessage({ type: 'newMap', sessionId: msg.sessionId, capturedAt: msg.capturedAt, frame: msg.frame, data: result });
 
   } else if (msg.type === 'preview' || msg.type === 'navigation-path') {
     // PointCloud2 format (ROS2): {width, height, fields, point_step, data: ArrayBuffer}

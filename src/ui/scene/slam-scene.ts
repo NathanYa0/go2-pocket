@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { PCDLoader } from 'three/examples/jsm/loaders/PCDLoader.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { RobotModel } from './robot-model';
+import { VoxelMap } from './voxel-map';
 import { theme } from '../theme';
 
 export type ClickMode = 'none' | 'initial_pose' | 'goal' | 'patrol';
@@ -35,6 +36,8 @@ function createHeightMaterial(size: number): THREE.PointsMaterial {
 }
 
 export class SlamScene {
+  private liveLayer = new THREE.Scene();
+  private liveVoxels: VoxelMap;
   private renderer: THREE.WebGLRenderer;
   private scene: THREE.Scene;
   private camera: THREE.PerspectiveCamera;
@@ -62,6 +65,7 @@ export class SlamScene {
 
   // Goal marker
   private goalMarker: THREE.Group | null = null;
+  private anchorMarker: THREE.Group | null = null;
 
   // Pose arrow (for hold-to-place then drag-to-set-yaw)
   private poseArrow: THREE.Group | null = null;
@@ -89,6 +93,9 @@ export class SlamScene {
     this.renderer.setClearColor(theme().colors.background);
 
     this.scene = new THREE.Scene();
+    this.liveLayer.visible = false;
+    this.scene.add(this.liveLayer);
+    this.liveVoxels = new VoxelMap(this.liveLayer);
     this.scene.background = new THREE.Color(theme().colors.background);
 
     // Z-up camera
@@ -168,6 +175,7 @@ export class SlamScene {
   // ── Point Cloud ──
 
   updatePointCloud(positions: Float32Array): void {
+    this.clearLiveLidar();
     const geo = this.filteredPoints.geometry;
     geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
     geo.computeBoundingSphere();
@@ -194,6 +202,8 @@ export class SlamScene {
     this.clearNavPath();
     this.clearGoalMarker();
     this.clearPatrolMarkers();
+    this.setAnchorMarker(null);
+    this.firstPose = true;
   }
 
   // ── Robot Position ──
@@ -219,6 +229,11 @@ export class SlamScene {
       this.controls.target.set(position.x, position.y, 0);
       this.camera.position.set(position.x, position.y - 5, 8);
     }
+  }
+
+  resetPoseTracking(): void {
+    this.firstPose = true;
+    this.clearTrace();
   }
 
   showRobot(visible: boolean): void {
@@ -362,6 +377,27 @@ export class SlamScene {
     this.scene.add(this.goalMarker);
   }
 
+  setAnchorMarker(anchor: { x: number; y: number; yaw: number } | null): void {
+    if (this.anchorMarker) {
+      this.scene.remove(this.anchorMarker);
+      this.anchorMarker.traverse(object => {
+        const mesh = object as THREE.Mesh;
+        mesh.geometry?.dispose();
+        const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        for (const material of materials) {
+          if (!material) continue;
+          (material as THREE.SpriteMaterial).map?.dispose();
+          material.dispose();
+        }
+      });
+      this.anchorMarker = null;
+    }
+    if (anchor) {
+      this.anchorMarker = this.createPoleMarker(anchor.x, anchor.y, anchor.yaw, 0x007e80, 'A');
+      this.scene.add(this.anchorMarker);
+    }
+  }
+
   clearGoalMarker(): void {
     if (this.goalMarker) {
       this.scene.remove(this.goalMarker);
@@ -379,6 +415,7 @@ export class SlamScene {
   private loadedPcd: THREE.Points | null = null;
 
   loadPCD(data: ArrayBuffer): void {
+    this.clearLiveLidar();
     this.clearLoadedPcd();
     const loader = new PCDLoader();
     const points = loader.parse(data);
@@ -630,7 +667,12 @@ export class SlamScene {
     this.grid = g;
   }
 
+  updateLiveLidar(data: unknown): void { this.liveLayer.visible = true; this.liveVoxels.processCompressed(data); }
+  clearLiveLidar(): void { this.liveLayer.visible = false; this.liveVoxels.clear(); }
+
   destroy(): void {
+    this.liveVoxels.destroy();
+    this.setAnchorMarker(null);
     cancelAnimationFrame(this.animId);
     this.controls.dispose();
     this.renderer.dispose();

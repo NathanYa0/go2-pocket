@@ -56,7 +56,15 @@ function inferFamilyFromSn(sn: string): 'Go2' | 'G1' | null {
   return null;
 }
 
+// Serialise scanner sessions: multiple UDP sockets on the same reply port can
+// steal each other's responses when the UI issues targeted and broad queries.
+let scanQueue: Promise<unknown> = Promise.resolve();
 function scanForRobots(family: string, timeoutMs = DEFAULT_SCAN_TIMEOUT, sn?: string): Promise<Array<{ sn: string; ip: string }>> {
+  const next = scanQueue.then(() => performRobotScan(family, timeoutMs, sn));
+  scanQueue = next.catch(() => {});
+  return next;
+}
+function performRobotScan(family: string, timeoutMs = DEFAULT_SCAN_TIMEOUT, sn?: string): Promise<Array<{ sn: string; ip: string }>> {
   const groups = groupsForFamily(family);
   const queryPayload = sn
     ? JSON.stringify({ name: 'unitree_dapengche', sn })

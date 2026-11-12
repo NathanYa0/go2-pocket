@@ -1,0 +1,831 @@
+# Copyright 2025-2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Rerun bridge for logging pubsub messages with to_rerun() methods."""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import field
+import functools
+from operator import attrgetter
+import os
+import shutil
+import signal
+import socket
+import subprocess
+import sys
+import threading
+import time
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    NamedTuple,
+    Protocol,
+    TypeAlias,
+    TypeGuard,
+    TypeVar,
+    cast,
+    get_args,
+    runtime_checkable,
+)
+from urllib.parse import urlparse
+
+import numpy as np
+from pydantic import Field
+from reactivex.disposable import Disposable
+from toolz import pipe  # type: ignore[import-untyped]
+
+from dimos.constants import RECORDINGS_DIR
+from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV
+from dimos.core.core import rpc
+from dimos.core.global_config import global_config
+from dimos.core.module import Module, ModuleConfig
+from dimos.core.transport_factory import transport_topic
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.tf2_msgs.TFMessage import TfFrameTree, TFMessage
+from dimos.protocol.pubsub.impl.lcmpubsub import LCM
+from dimos.protocol.pubsub.impl.zenohpubsub import KEY_PREFIX, Topic as ZenohTopic, Zenoh
+from dimos.protocol.pubsub.patterns import Glob, pattern_matches
+from dimos.protocol.pubsub.spec import SubscribeAllCapable
+from dimos.protocol.service.lcmservice import autoconf
+from dimos.utils.generic import get_local_ips
+from dimos.utils.logging_config import setup_logger
+from dimos.visualization.rerun.constants import (
+    RERUN_ENABLE_WEB,
+    RERUN_GRPC_PORT,
+    RERUN_OPEN_DEFAULT,
+    RERUN_WEB_VIEWER_PORT,
+    RERUN_WEBSOCKET_URL,
+    RerunOpenOption,
+)
+from dimos.visualization.rerun.init import rerun_init, spawn_viewer
+from dimos.visualization.rerun.spec import RerunWebSocketServerSpec
+
+if TYPE_CHECKING:
+    from rerun._baseclasses import Archetype
+    from rerun.blueprint import Blueprint
+
+# TODO OUT visual annotations
+#
+# In the future it would be nice if modules can annotate their individual OUTs with (general or rerun specific)
+# hints related to their visualization
+#
+# so stuff like color, update frequency etc (some Image needs to be rendered on the 3d floor like occupancy grid)
+# some other image is an image to be streamed into a specific 2D view etc.
+#
+# To achieve this we'd feed a full blueprint into the rerun bridge.
+#
+# rerun bridge can then inspect all transports used, all modules with their outs,
+# automatically spy an all the transports and read visualization hints
+#
+# Temporarily we are using these "sideloading" visual_override={} dict on the bridge
+# to define custom visualizations for specific topics
+#
+# as well as pubsubs={} to specify which protocols to listen to.
+
+logger = setup_logger()
+
+
+class RerunEntry(NamedTuple):
+    """One entity to log. Static entries survive the viewer's memory limit."""
+
+    path: str
+    archetype: Archetype
+    static: bool = False
+
+
+RerunMulti: TypeAlias = "list[tuple[str, Archetype] | RerunEntry]"
+RerunData: TypeAlias = "Archetype | RerunMulti"
+
+# A region cell packed into a header seq: i in the high half, j in the low half,
+# both signed 16 bit. pack_cell in mls_planner/rust/src/region_viz.rs owns this
+# layout, the ray tracer copies it.
+CELL_SHIFT = 16
+CELL_MASK = 0xFFFF
+CELL_SIGN = 0x8000
+
+
+def region_entity(base: str, seq: int) -> str:
+    """The entity of the region cell a native packed into a header seq."""
+    i = seq >> CELL_SHIFT
+    j = ((seq & CELL_MASK) ^ CELL_SIGN) - CELL_SIGN
+    return f"{base}/{i}_{j}"
+
+
+if TYPE_CHECKING:
+    BlueprintFactory: TypeAlias = Callable[[], "Blueprint"]
+    # A renderer for an entity, or None to hide it.
+    VisualOverride: TypeAlias = Callable[[Any], "RerunData | None"] | None
+else:
+    # Pydantic evaluates Config's annotations at runtime, so keep rerun types
+    # out of them - importing rerun here would defeat the lazy import below.
+    BlueprintFactory = Callable[..., Any]
+    VisualOverride = Callable[..., Any] | None
+
+
+@runtime_checkable
+class KeyedRenderer(Protocol):
+    """A renderer whose entities are keyed by the message's header seq."""
+
+    keyed_by_seq: bool
+
+    def __call__(self, *args: object, **kwargs: object) -> object: ...
+
+
+RendererT = TypeVar("RendererT", bound=Callable[..., object])
+
+
+def keyed_by_seq(renderer: RendererT) -> RendererT:
+    """Mark a renderer whose topic carries one message per seq, delivered latest per seq."""
+    renderer.keyed_by_seq = True  # type: ignore[attr-defined]
+    return renderer
+
+
+def is_keyed_by_seq(renderer: object) -> bool:
+    """Whether a renderer, or the function under a partial, is marked keyed."""
+    while isinstance(renderer, functools.partial):
+        renderer = renderer.func
+    return isinstance(renderer, KeyedRenderer) and renderer.keyed_by_seq
+
+
+def is_rerun_multi(data: Any) -> TypeGuard[RerunMulti]:
+    """Check if data is a list of (entity_path, archetype) tuples."""
+    from rerun._baseclasses import Archetype
+
+    return (
+        isinstance(data, list)
+        and bool(data)
+        and isinstance(data[0], tuple)
+        and len(data[0]) in (2, 3)
+        and isinstance(data[0][0], str)
+        and isinstance(data[0][1], Archetype)
+    )
+
+
+@runtime_checkable
+class RerunConvertible(Protocol):
+    """Protocol for messages that can be converted to Rerun data."""
+
+    def to_rerun(self) -> RerunData: ...
+
+
+def _hex_to_rgba(hex_color: str) -> int:
+    """Convert '#RRGGBB' to a 0xRRGGBBAA int (fully opaque)."""
+    h = hex_color.lstrip("#")
+    if len(h) == 6:
+        return int(h + "ff", 16)
+    return int(h[:8], 16)
+
+
+def _graphviz_plain_lines(output: str) -> list[str]:
+    """Join physical lines that Graphviz wraps with a trailing backslash."""
+    lines: list[str] = []
+    pending = ""
+    for physical_line in output.splitlines():
+        pending += physical_line
+        if pending.endswith("\\"):
+            pending = pending[:-1]
+            continue
+        lines.append(pending)
+        pending = ""
+    if pending:
+        lines.append(pending)
+    return lines
+
+
+def _with_graph_tab(bp: Blueprint) -> Blueprint:
+    """Add a Graph tab alongside the existing viewer layout without changing it."""
+    import rerun.blueprint as rrb
+
+    root = bp.root_container
+    return rrb.Blueprint(
+        rrb.Tabs(
+            root,
+            rrb.GraphView(origin="blueprint", name="Graph"),
+        ),
+        auto_layout=bp.auto_layout,
+        auto_views=bp.auto_views,
+        collapse_panels=bp.collapse_panels,
+    )
+
+
+def _default_blueprint() -> Blueprint:
+    """Default blueprint with black background and raised grid."""
+    import rerun as rr
+    import rerun.blueprint as rrb
+
+    return rrb.Blueprint(
+        rrb.Spatial3DView(
+            origin="world",
+            background=rrb.Background(kind="SolidColor", color=[0, 0, 0]),
+            line_grid=rrb.LineGrid3D(
+                plane=rr.components.Plane3D.XY.with_distance(0.5),
+            ),
+        ),
+    )
+
+
+def _default_pubsubs(config: Any = None) -> list[SubscribeAllCapable[Any, Any]]:
+    """Select the pubsub backend matching the active transport.
+
+    All channels including TF flow over the active transport, so the bridge
+    listens only on that backend. To also bridge external LCM publishers while
+    running Zenoh, pass an explicit ``pubsubs=[Zenoh(), LCM()]``.
+    """
+    transport = getattr(config, "transport", None) or global_config.transport
+    if transport == "zenoh":
+        return [Zenoh()]
+    return [LCM()]
+
+
+def _resolve_pubsubs(config: Any) -> list[SubscribeAllCapable[Any, Any]]:
+    """Return explicit pubsubs when truly overridden, else transport defaults.
+
+    Older blueprints commonly passed ``pubsubs=[LCM()]`` as the effective
+    default. Preserve the newer transport-driven behavior for that legacy
+    value, but honor explicit non-default overrides such as custom backends.
+    """
+    fields_set: set[str] = cast("set[str]", getattr(config, "model_fields_set", set()))
+    pubsubs = cast(
+        "list[SubscribeAllCapable[Any, Any]] | None",
+        getattr(config, "pubsubs", None),
+    )
+    if "pubsubs" in fields_set and pubsubs is not None:
+        is_legacy_default = len(pubsubs) == 1 and isinstance(pubsubs[0], LCM)
+        if not is_legacy_default:
+            return pubsubs
+    return _default_pubsubs(getattr(config, "g", config))
+
+
+class Config(ModuleConfig):
+    """Configuration for RerunBridgeModule.
+
+    The pubsubs field is accepted for backwards compatibility. The legacy
+    ``[LCM()]`` value is treated as the old default and replaced by the
+    transport-driven runtime default. Explicit non-default overrides are still
+    honored.
+    """
+
+    pubsubs: list[SubscribeAllCapable[Any, Any]] = field(default_factory=lambda: [LCM()])
+
+    visual_override: dict[Glob | str, VisualOverride] = field(default_factory=dict)
+    static: dict[str, Callable[[Any], Any]] = field(default_factory=dict)
+    max_hz: dict[str, float] = field(default_factory=dict)
+
+    # Topic names without the `dimos/` prefix; empty means every topic.
+    # On zenoh an unlisted topic never crosses the link, unlike `visual_override: None`.
+    topics: list[str] = field(default_factory=list)
+    entity_prefix: str = "world"
+    # Length of the triads to draw
+    tf_axes: float = 0.0
+    topic_to_entity: Callable[[Any], str] | None = None
+    connect_url: str | None = None
+    host: str = Field(default_factory=lambda m: m["g"].listen_host)
+    # None: the RerunWebSocketServer in this blueprint, or the default without one.
+    websocket_url: str | None = None
+    memory_limit: str = "25%"
+    rerun_open: RerunOpenOption = RERUN_OPEN_DEFAULT
+    rerun_web: bool = RERUN_ENABLE_WEB
+    rerun_save: bool = False
+    web_port: int = RERUN_WEB_VIEWER_PORT
+    blueprint: BlueprintFactory | None = _default_blueprint
+
+
+class RerunBridgeModule(Module):
+    """Bridge that logs messages from pubsubs to Rerun.
+
+    Spawns its own Rerun viewer and subscribes to all topics on each provided
+    pubsub. Any message that has a to_rerun() method is automatically logged.
+
+    Example:
+        from dimos.protocol.pubsub.impl.lcmpubsub import LCM
+
+        lcm = LCM()
+        bridge = RerunBridgeModule(pubsubs=[lcm])
+        bridge.start()
+        # All messages with to_rerun() are now logged to Rerun
+        bridge.stop()
+    """
+
+    config: Config
+    dedicated_worker = True
+    _last_log: dict[str, float]
+    _websocket_url: str
+
+    # Injected when the blueprint has a RerunWebSocketServer.
+    _websocket_server: RerunWebSocketServerSpec | None = None
+
+    # TODO this doesn't belong here, either hardcode it or put it to rerun bridge config
+    GRAPH_VIZ_SCALE = 100.0
+    MODULE_RADIUS = 20.0
+    CHANNEL_RADIUS = 12.0
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        # import here, on this module's own worker during the deploy
+        # phase, rather than inside start() on the blueprint's critical path.
+        import rerun  # noqa: F401
+
+        self._last_log = {}
+        self._override_cache: dict[str, Callable[[Any], RerunData | None]] = {}
+        self._frame_attached: dict[str, str] = {}
+        self._camera_infos: dict[str, CameraInfo] = {}
+        self._image_entities: set[str] = set()
+        self._min_intervals: dict[str, float] = {}
+        self._tf_lock = threading.Lock()
+        self._tf_tree = self._new_tf_tree()
+
+    def _new_tf_tree(self) -> TfFrameTree | None:
+        if self.config.tf_axes <= 0:
+            return None
+        return TfFrameTree(
+            axis_length=self.config.tf_axes,
+            root=f"{self.config.entity_prefix}/tf",
+        )
+
+    @property
+    def host(self) -> str:
+        return self.config.host
+
+    @rpc
+    def opens_web_viewer(self) -> bool:
+        """Whether this session requests a browser viewer."""
+        return self.config.rerun_open in ("web", "both")
+
+    def _resolve_websocket_url(self) -> str:
+        if self.config.websocket_url is not None:
+            return self.config.websocket_url
+        if self._websocket_server is not None:
+            return str(self._websocket_server.websocket_url())
+        return RERUN_WEBSOCKET_URL
+
+    def _visual_override_for_entity_path(
+        self, entity_path: str
+    ) -> Callable[[Any], RerunData | None]:
+        """Return a composed visual override for the entity path.
+
+        Chains matching overrides from config, ending with final_convert
+        which handles .to_rerun() or passes through Archetypes. Cached per
+        instance (not via ``lru_cache`` on a method, which would leak ``self``).
+        """
+        from rerun._baseclasses import Archetype
+
+        cached = self._override_cache.get(entity_path)
+        if cached is not None:
+            return cached
+
+        matches = [
+            fn
+            for pattern, fn in self.config.visual_override.items()
+            if pattern_matches(pattern, entity_path)
+        ]
+
+        # None means "suppress this topic entirely"
+        if any(fn is None for fn in matches):
+
+            def suppressed(msg: Any) -> RerunData | None:
+                return None
+
+            self._override_cache[entity_path] = suppressed
+            return suppressed
+
+        def final_convert(msg: Any) -> RerunData | None:
+            if isinstance(msg, Archetype):
+                return msg
+            if is_rerun_multi(msg):
+                return msg
+            if isinstance(msg, RerunConvertible):
+                return msg.to_rerun()
+            return None
+
+        # compose all converters
+        def composed(msg: Any) -> RerunData | None:
+            return cast("RerunData | None", pipe(msg, *matches, final_convert))
+
+        self._override_cache[entity_path] = composed
+        return composed
+
+    def _keyed_topics(self) -> list[str]:
+        """Channels whose renderer keys entities by seq, so every seq must arrive."""
+        prefix = f"{self.config.entity_prefix}/"
+        return [
+            str(path).removeprefix(prefix)
+            for path, renderer in self.config.visual_override.items()
+            if is_keyed_by_seq(renderer)
+        ]
+
+    def _get_entity_path(self, topic: Any) -> str:
+        if self.config.topic_to_entity:
+            return self.config.topic_to_entity(topic)
+
+        topic_str = getattr(topic, "name", None) or str(topic)
+        # Strip type suffix: LCM uses '#type', Zenoh embeds type as '/type' in key expr
+        # but _key_expr_to_topic already parsed it into topic.topic, so use that.
+        raw = getattr(topic, "topic", topic_str)
+        if isinstance(raw, str):
+            topic_str = raw
+        topic_str = topic_str.split("#")[0]
+        # Strip the zenoh key prefix (dimos/ or dimos-domains/<domain>/) to match LCM entity paths
+        topic_str = KEY_PREFIX.sub("/", topic_str)
+        return f"{self.config.entity_prefix}{topic_str}"
+
+    def _on_message(self, msg: Any, topic: Any) -> None:
+        """Handle incoming message - log to rerun."""
+        import rerun as rr
+
+        entity_path: str = self._get_entity_path(topic)
+
+        # Throttle entities with a max_hz limit
+        if entity_path in self._min_intervals:
+            now = time.monotonic()
+            if now - self._last_log.get(entity_path, 0.0) < self._min_intervals[entity_path]:
+                return
+            self._last_log[entity_path] = now
+
+        if self._tf_tree is not None and isinstance(msg, TFMessage):
+            with self._tf_lock:
+                for path, archetype in msg.to_rerun(self._tf_tree):
+                    rr.log(path, archetype)
+            return
+
+        if isinstance(msg, CameraInfo) and entity_path not in self.config.visual_override:
+            self._log_camera_info(entity_path, msg)
+            return
+
+        rerun_data: RerunData | None = self._visual_override_for_entity_path(entity_path)(msg)
+
+        if not rerun_data:
+            return
+
+        # TFMessage for example returns list of (entity_path, archetype) tuples
+        if is_rerun_multi(rerun_data):
+            for entry in rerun_data:
+                rr.log(entry[0], entry[1], static=isinstance(entry, RerunEntry) and entry.static)
+            # Pin the base entity to the message frame once, so child entities
+            # follow it the way a single archetype does below.
+            frame_id = getattr(msg, "frame_id", None)
+            if frame_id and self._frame_attached.get(entity_path) != frame_id:
+                rr.log(entity_path, rr.Transform3D(parent_frame=f"tf#/{frame_id}"))
+                self._frame_attached[entity_path] = frame_id
+        else:
+            rr.log(entity_path, cast("Archetype", rerun_data))
+            if isinstance(msg, Image):
+                self._image_entities.add(entity_path)
+            # if source msg carries a frame_id, attach the entity to that TF frame
+            # should skip if archetype is a Transform3D
+            if not isinstance(rerun_data, rr.Transform3D):
+                frame_id = getattr(msg, "frame_id", None)
+                if frame_id and self._frame_attached.get(entity_path) != frame_id:
+                    rr.log(entity_path, rr.Transform3D(parent_frame=f"tf#/{frame_id}"))
+                    self._frame_attached[entity_path] = frame_id
+                    if isinstance(msg, Image) and frame_id in self._camera_infos:
+                        rr.log(entity_path, self._camera_infos[frame_id].to_rerun_pinhole())
+
+    def _log_camera_info(self, entity_path: str, info: CameraInfo) -> None:
+        """A CameraInfo is the pinhole of every image in its optical frame.
+
+        Rerun draws the frustum only when the Pinhole sits on the image entity,
+        so the info is paired with images by frame_id rather than logged on
+        its own topic; an image that arrives later picks it up on attach.
+        """
+        import rerun as rr
+
+        if not info.frame_id:
+            rr.log(entity_path, info.to_rerun_pinhole())
+            return
+        self._camera_infos[info.frame_id] = info
+        for image_path, frame_id in self._frame_attached.items():
+            if frame_id == info.frame_id and image_path in self._image_entities:
+                rr.log(image_path, info.to_rerun_pinhole())
+
+    @rpc
+    def start(self) -> None:
+        import rerun as rr
+
+        super().start()
+
+        logger.info("Rerun bridge starting")
+
+        self._last_log = {}
+        self._frame_attached = {}
+        self._camera_infos = {}
+        self._image_entities = set()
+        self._tf_tree = self._new_tf_tree()
+        self._min_intervals = {
+            entity: 1.0 / hz for entity, hz in self.config.max_hz.items() if hz > 0
+        }
+
+        connect_url = self.config.connect_url
+        if connect_url is None:
+            connect_url = f"rerun+http://{self.host}:{RERUN_GRPC_PORT}/proxy"
+
+        server_uri = rerun_init(
+            start_grpc=True,
+            grpc_config={
+                "connect_url": connect_url,
+                "server_memory_limit": self.config.memory_limit,
+            },
+        )
+        assert server_uri is not None  # start_grpc=True guarantees a URI
+
+        parsed = urlparse(connect_url.replace("rerun+", "", 1))
+        grpc_port = parsed.port or RERUN_GRPC_PORT
+
+        if self.config.rerun_save:
+            self._save_client = _start_save_client(server_uri)
+
+        if self.config.rerun_open not in get_args(RerunOpenOption):
+            logger.warning(
+                f"rerun_open was {self.config.rerun_open} which is not one of "
+                f"{get_args(RerunOpenOption)}"
+            )
+
+        self._websocket_url = self._resolve_websocket_url()
+        spawned = False
+        if self.config.rerun_open in ("native", "both"):
+            spawned = spawn_viewer(server_uri, self.config.memory_limit, self._websocket_url)
+
+        open_web = self.opens_web_viewer()
+        if open_web or self.config.rerun_web:
+            rr.serve_web_viewer(
+                connect_to=server_uri,
+                open_browser=open_web,
+                web_port=self.config.web_port,
+            )
+
+        # TODO: `spawned` is supposed to be false when run on the G1 (because viewer doesn't have a display) somehow it returns true
+        if (
+            self.config.rerun_open == "none"
+            or (self.config.rerun_open == "native" and not spawned)
+            or self.host == "0.0.0.0"
+        ):
+            self._log_connect_hints(grpc_port)
+
+        if self.config.blueprint:
+            rr.send_blueprint(_with_graph_tab(self.config.blueprint()))
+
+        # Resolve pubsubs lazily — the module-level global_config singleton in worker
+        # processes doesn't have CLI overrides. Use self.config.g which is the parent's
+        # updated config, passed via the worker kwargs.
+        pubsubs = _resolve_pubsubs(self.config)
+
+        # Start pubsubs and subscribe to all messages
+        for pubsub in pubsubs:
+            logger.info(f"bridge listening on {pubsub.__class__.__name__}")
+            if hasattr(pubsub, "start"):
+                pubsub.start()
+            self.register_disposable(Disposable(self._subscribe(pubsub)))
+
+        # Add pubsub stop as disposable
+        for pubsub in pubsubs:
+            if hasattr(pubsub, "stop"):
+                self.register_disposable(Disposable(pubsub.stop))  # type: ignore[union-attr]
+
+        self._log_static()
+
+    def _subscribe(self, pubsub: SubscribeAllCapable[Any, Any]) -> Callable[[], None]:
+        """Subscribe to the named topics, or to everything when none are named.
+
+        A zenoh key is `dimos/<topic>/<Type>`, so one wildcard per name needs no type; LCM cannot do this.
+        """
+        if not self.config.topics:
+            if isinstance(pubsub, Zenoh):
+                keyed = {name: attrgetter("seq") for name in self._keyed_topics()}
+                return pubsub.subscribe_all(self._on_message, keyed=keyed)
+            return pubsub.subscribe_all(self._on_message)
+
+        if not isinstance(pubsub, Zenoh):
+            logger.warning(
+                f"{pubsub.__class__.__name__} cannot subscribe per topic; "
+                f"listening to everything and ignoring topics={self.config.topics}"
+            )
+            return pubsub.subscribe_all(self._on_message)
+
+        # a pattern over the type segment, not the concrete Topic LCMTopicProto asks for
+        keys = [f"{transport_topic(name, self.config.g)}/*" for name in self.config.topics]
+        unsubs = [pubsub.subscribe(ZenohTopic(key), self._on_message) for key in keys]  # type: ignore[arg-type]
+        logger.info(f"bridge subscribed to {len(unsubs)} topics: {', '.join(self.config.topics)}")
+
+        def unsubscribe() -> None:
+            for unsub in unsubs:
+                unsub()
+
+        return unsubscribe
+
+    def _log_connect_hints(self, grpc_port: int) -> None:
+        """Log CLI commands for connecting a viewer to this bridge."""
+        local_ips = get_local_ips()
+        local_grpc = f"rerun+http://{self.host}:{grpc_port}/proxy"
+        local_ws = self._websocket_url
+        hostname = socket.gethostname()
+
+        columns = 60
+        lines = [
+            "",
+            "=" * columns,
+            "Rerun gRPC server running (no viewer opened)",
+            "",
+            "Connect a viewer:",
+            f"  dimos-viewer --connect {local_grpc} --ws-url {local_ws}",
+        ]
+        for ip, iface in local_ips:
+            remote_grpc = f"rerun+http://{ip}:{grpc_port}/proxy"
+            remote_ws = self._websocket_url
+            ws = urlparse(remote_ws)
+            if ws.hostname in ("localhost", "127.0.0.1", "0.0.0.0", "::", "::1"):
+                host = f"[{ip}]" if ":" in ip else ip
+                netloc = f"{host}:{ws.port}" if ws.port is not None else host
+                remote_ws = ws._replace(netloc=netloc).geturl()
+            lines.append(f"  dimos-viewer --connect {remote_grpc} --ws-url {remote_ws}  # {iface}")
+        lines.append("")
+        lines.append(f"  hostname: {hostname}")
+        lines.append("=" * columns)
+        lines.append("")
+
+        logger.info("\n".join(lines))
+
+    def _log_static(self) -> None:
+        import rerun as rr
+
+        for entity_path, factory in self.config.static.items():
+            data = factory(rr)
+            if is_rerun_multi(data):
+                logger.info(
+                    "Rerun static entity",
+                    entity_path=entity_path,
+                    archetypes=[type(entry[1]).__name__ for entry in data],
+                )
+                for entry in data:
+                    rr.log(entry[0], entry[1], static=True)
+                continue
+
+            if isinstance(data, list):
+                logger.info(
+                    "Rerun static entity",
+                    entity_path=entity_path,
+                    archetypes=[type(archetype).__name__ for archetype in data],
+                )
+                for archetype in data:
+                    rr.log(entity_path, archetype, static=True)
+            else:
+                logger.info(
+                    "Rerun static entity",
+                    entity_path=entity_path,
+                    archetypes=[type(data).__name__],
+                )
+                rr.log(entity_path, data, static=True)
+
+    @rpc
+    def log_blueprint_graph(self, dot_code: str, module_names: list[str]) -> None:
+        """Log a blueprint module graph from a Graphviz DOT string.
+
+        Runs ``dot -Tplain`` to compute positions, then logs
+        ``rr.GraphNodes`` + ``rr.GraphEdges`` to the active recording.
+
+        Args:
+            dot_code: The DOT-format graph (from ``introspection.blueprint.dot.render``).
+            module_names: List of module class names (to distinguish modules from channels).
+        """
+        import rerun as rr
+
+        try:
+            result = subprocess.run(
+                ["dot", "-Tplain"], input=dot_code, text=True, capture_output=True, timeout=30
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return
+        if result.returncode != 0:
+            return
+
+        node_ids: list[str] = []
+        node_labels: list[str] = []
+        node_colors: list[int] = []
+        positions: list[tuple[float, float]] = []
+        radii: list[float] = []
+        edges: list[tuple[str, str]] = []
+        module_set = set(module_names)
+
+        for line in _graphviz_plain_lines(result.stdout):
+            if line.startswith("node "):
+                parts = line.split()
+                node_id = parts[1].strip('"')
+                x = float(parts[2]) * self.GRAPH_VIZ_SCALE
+                y = -float(parts[3]) * self.GRAPH_VIZ_SCALE
+                label = parts[6].strip('"')
+                color = parts[9].strip('"')
+
+                node_ids.append(node_id)
+                node_labels.append(label)
+                positions.append((x, y))
+                node_colors.append(_hex_to_rgba(color))
+                radii.append(self.MODULE_RADIUS if node_id in module_set else self.CHANNEL_RADIUS)
+
+            elif line.startswith("edge "):
+                parts = line.split()
+                edges.append((parts[1].strip('"'), parts[2].strip('"')))
+
+        if not node_ids:
+            return
+
+        rr.log(
+            "blueprint",
+            rr.GraphNodes(
+                node_ids=node_ids,
+                labels=node_labels,
+                colors=np.asarray(node_colors, dtype=np.uint32),
+                positions=positions,
+                radii=radii,
+                show_labels=True,
+            ),
+            rr.GraphEdges(edges=edges, graph_type="directed"),
+            static=True,
+        )
+
+    @rpc
+    def stop(self) -> None:
+        self._override_cache.clear()
+        self._frame_attached.clear()
+        self._tf_tree = None
+        try:
+            super().stop()
+        finally:
+            self._stop_save_client()
+
+    _save_client: subprocess.Popen[bytes] | None = None
+
+    def _stop_save_client(self) -> None:
+        """Hand the save client everything logged so far, then let it close the file."""
+        client, self._save_client = self._save_client, None
+        if client is None:
+            return
+        if client.poll() is not None:
+            logger.warning(
+                f"rerun --save exited early (code {client.returncode}); the .rrd may be empty"
+            )
+            return
+        import rerun as rr
+
+        try:
+            rr.get_global_data_recording().flush()  # type: ignore[union-attr]
+        except Exception:
+            logger.warning("Rerun flush before closing the .rrd failed", exc_info=True)
+        client.send_signal(signal.SIGINT)
+        try:
+            client.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            logger.warning("rerun --save did not exit; killing it, the .rrd may be truncated")
+            client.kill()
+            client.wait()
+
+
+def _start_save_client(server_uri: str) -> subprocess.Popen[bytes] | None:
+    """A headless ``rerun --save`` client of our gRPC server.
+
+    It streams every incoming log event to ``recordings/<run-id>/rerun.rrd``, the
+    folder ``--record`` writes ``memory.db`` to, so a run's sensor recording and
+    its visualization sit together. Running it as a client keeps the server, and
+    any live viewer on it, exactly as they are.
+    """
+    cli = shutil.which("rerun")
+    if cli is None:
+        logger.warning("rerun_save: no `rerun` CLI on PATH, the stream is not saved")
+        return None
+    run_id = os.environ.get(DIMOS_RUN_ID_ENV) or time.strftime("%Y%m%d-%H%M%S")
+    path = RECORDINGS_DIR / run_id / "rerun.rrd"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    logger.info("Saving the Rerun stream", path=str(path))
+    # It also serves gRPC itself; on a taken default port it exits with an empty .rrd.
+    return subprocess.Popen(
+        [cli, "--save", str(path), "--bind", "127.0.0.1", "--port", "auto", server_uri],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def run_bridge(**config: Any) -> None:
+    """Start a RerunBridgeModule in this process and block until interrupted."""
+    autoconf(check_only=True)
+
+    bridge = RerunBridgeModule(**config)
+    bridge.start()
+
+    def _shutdown(*_: object) -> None:
+        bridge.stop()
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, _shutdown)
+    signal.pause()

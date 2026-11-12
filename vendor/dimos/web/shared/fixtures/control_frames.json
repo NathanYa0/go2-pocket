@@ -1,0 +1,647 @@
+{
+  "vectors": [
+    {
+      "name": "hello_robot",
+      "message": {
+        "t": "hello",
+        "v": 8,
+        "role": "robot",
+        "robot": {
+          "id": "go2-lab",
+          "name": "Go2 Laborator β",
+          "model": "unitree-go2"
+        },
+        "manifest": {
+          "version": 1,
+          "channels": [
+            {
+              "ch": "color_image",
+              "dir": "rx",
+              "encoding": "jpeg.v1",
+              "delivery": "latest",
+              "maxHz": 15.5,
+              "params": {
+                "quality": 75.5
+              },
+              "publish": "none",
+              "requiredScope": null
+            },
+            {
+              "ch": "odom",
+              "dir": "rx",
+              "encoding": "pose.json.v1",
+              "delivery": "reliable",
+              "maxHz": 20.5,
+              "params": {},
+              "publish": "none",
+              "requiredScope": null
+            }
+          ],
+          "panels": [
+            {
+              "id": "p0",
+              "kind": "video",
+              "title": "Camera β",
+              "channels": [
+                "color_image"
+              ],
+              "params": {}
+            }
+          ],
+          "layout": {
+            "row": [
+              "p0"
+            ]
+          },
+          "pages": []
+        }
+      },
+      "b64": "MwIAAHsidCI6ImhlbGxvIiwidiI6OCwicm9sZSI6InJvYm90Iiwicm9ib3QiOnsiaWQiOiJnbzItbGFiIiwibmFtZSI6IkdvMiBMYWJvcmF0b3IgzrIiLCJtb2RlbCI6InVuaXRyZWUtZ28yIn0sIm1hbmlmZXN0Ijp7InZlcnNpb24iOjEsImNoYW5uZWxzIjpbeyJjaCI6ImNvbG9yX2ltYWdlIiwiZGlyIjoicngiLCJlbmNvZGluZyI6ImpwZWcudjEiLCJkZWxpdmVyeSI6ImxhdGVzdCIsIm1heEh6IjoxNS41LCJwYXJhbXMiOnsicXVhbGl0eSI6NzUuNX0sInB1Ymxpc2giOiJub25lIiwicmVxdWlyZWRTY29wZSI6bnVsbH0seyJjaCI6Im9kb20iLCJkaXIiOiJyeCIsImVuY29kaW5nIjoicG9zZS5qc29uLnYxIiwiZGVsaXZlcnkiOiJyZWxpYWJsZSIsIm1heEh6IjoyMC41LCJwYXJhbXMiOnt9LCJwdWJsaXNoIjoibm9uZSIsInJlcXVpcmVkU2NvcGUiOm51bGx9XSwicGFuZWxzIjpbeyJpZCI6InAwIiwia2luZCI6InZpZGVvIiwidGl0bGUiOiJDYW1lcmEgzrIiLCJjaGFubmVscyI6WyJjb2xvcl9pbWFnZSJdLCJwYXJhbXMiOnt9fV0sImxheW91dCI6eyJyb3ciOlsicDAiXX0sInBhZ2VzIjpbXX19"
+    },
+    {
+      "name": "hello_viewer",
+      "message": {
+        "t": "hello",
+        "v": 8,
+        "role": "viewer"
+      },
+      "b64": "IwAAAHsidCI6ImhlbGxvIiwidiI6OCwicm9sZSI6InZpZXdlciJ9"
+    },
+    {
+      "name": "hello_viewer_token",
+      "message": {
+        "t": "hello",
+        "v": 8,
+        "role": "viewer",
+        "token": "viewer-token-fixture-0123456789abcdef"
+      },
+      "b64": "UwAAAHsidCI6ImhlbGxvIiwidiI6OCwicm9sZSI6InZpZXdlciIsInRva2VuIjoidmlld2VyLXRva2VuLWZpeHR1cmUtMDEyMzQ1Njc4OWFiY2RlZiJ9"
+    },
+    {
+      "name": "welcome",
+      "message": {
+        "t": "welcome",
+        "v": 8
+      },
+      "b64": "FQAAAHsidCI6IndlbGNvbWUiLCJ2Ijo4fQ=="
+    },
+    {
+      "name": "hello_topic_source",
+      "message": {
+        "t": "hello",
+        "v": 8,
+        "role": "robot",
+        "token": "provider-token-fixture-0123456789",
+        "topicSource": "workspace",
+        "topicsVersion": 1,
+        "topicCapabilities": {
+          "read": true,
+          "write": false,
+          "profiles": [
+            "raw",
+            "depth.lossless.v1"
+          ],
+          "guardedPublishers": false
+        }
+      },
+      "b64": "6wAAAHsidCI6ImhlbGxvIiwidiI6OCwicm9sZSI6InJvYm90IiwidG9rZW4iOiJwcm92aWRlci10b2tlbi1maXh0dXJlLTAxMjM0NTY3ODkiLCJ0b3BpY1NvdXJjZSI6IndvcmtzcGFjZSIsInRvcGljc1ZlcnNpb24iOjEsInRvcGljQ2FwYWJpbGl0aWVzIjp7InJlYWQiOnRydWUsIndyaXRlIjpmYWxzZSwicHJvZmlsZXMiOlsicmF3IiwiZGVwdGgubG9zc2xlc3MudjEiXSwiZ3VhcmRlZFB1Ymxpc2hlcnMiOmZhbHNlfX0="
+    },
+    {
+      "name": "topic_sources",
+      "message": {
+        "t": "topic_sources",
+        "v": 1,
+        "sources": [
+          {
+            "source": "workspace",
+            "gen": 3,
+            "read": true,
+            "write": false,
+            "profiles": [
+              "raw"
+            ],
+            "guardedPublishers": false
+          }
+        ]
+      },
+      "b64": "jQAAAHsidCI6InRvcGljX3NvdXJjZXMiLCJ2IjoxLCJzb3VyY2VzIjpbeyJzb3VyY2UiOiJ3b3Jrc3BhY2UiLCJnZW4iOjMsInJlYWQiOnRydWUsIndyaXRlIjpmYWxzZSwicHJvZmlsZXMiOlsicmF3Il0sImd1YXJkZWRQdWJsaXNoZXJzIjpmYWxzZX1dfQ=="
+    },
+    {
+      "name": "topic_sub",
+      "message": {
+        "t": "topic_sub",
+        "id": "s1",
+        "source": "workspace",
+        "keyExpr": "demo/β/**",
+        "delivery": "reliable",
+        "profile": "raw",
+        "maxHz": 1000
+      },
+      "b64": "egAAAHsidCI6InRvcGljX3N1YiIsImlkIjoiczEiLCJzb3VyY2UiOiJ3b3Jrc3BhY2UiLCJrZXlFeHByIjoiZGVtby/Osi8qKiIsImRlbGl2ZXJ5IjoicmVsaWFibGUiLCJwcm9maWxlIjoicmF3IiwibWF4SHoiOjEwMDB9"
+    },
+    {
+      "name": "topic_open",
+      "message": {
+        "t": "topic_open",
+        "route": "@t:p1",
+        "gen": 3,
+        "keyExpr": "demo/β/**",
+        "delivery": "reliable",
+        "profile": "raw",
+        "maxHz": 1000
+      },
+      "b64": "dAAAAHsidCI6InRvcGljX29wZW4iLCJyb3V0ZSI6IkB0OnAxIiwiZ2VuIjozLCJrZXlFeHByIjoiZGVtby/Osi8qKiIsImRlbGl2ZXJ5IjoicmVsaWFibGUiLCJwcm9maWxlIjoicmF3IiwibWF4SHoiOjEwMDB9"
+    },
+    {
+      "name": "topic_opened",
+      "message": {
+        "t": "topic_opened",
+        "route": "@t:p1",
+        "gen": 3
+      },
+      "b64": "LAAAAHsidCI6InRvcGljX29wZW5lZCIsInJvdXRlIjoiQHQ6cDEiLCJnZW4iOjN9"
+    },
+    {
+      "name": "topic_ready",
+      "message": {
+        "t": "topic_ready",
+        "id": "s1",
+        "source": "workspace",
+        "route": "@t:v2",
+        "gen": 3
+      },
+      "b64": "SgAAAHsidCI6InRvcGljX3JlYWR5IiwiaWQiOiJzMSIsInNvdXJjZSI6IndvcmtzcGFjZSIsInJvdXRlIjoiQHQ6djIiLCJnZW4iOjN9"
+    },
+    {
+      "name": "topic_activate",
+      "message": {
+        "t": "topic_activate",
+        "route": "@t:v2",
+        "gen": 3
+      },
+      "b64": "LgAAAHsidCI6InRvcGljX2FjdGl2YXRlIiwicm91dGUiOiJAdDp2MiIsImdlbiI6M30="
+    },
+    {
+      "name": "topic_rate_update",
+      "message": {
+        "t": "topic_activate",
+        "route": "@t:p1",
+        "gen": 3,
+        "maxHz": 30
+      },
+      "b64": "OQAAAHsidCI6InRvcGljX2FjdGl2YXRlIiwicm91dGUiOiJAdDpwMSIsImdlbiI6MywibWF4SHoiOjMwfQ=="
+    },
+    {
+      "name": "topic_close",
+      "message": {
+        "t": "topic_close",
+        "route": "@t:p1",
+        "gen": 3
+      },
+      "b64": "KwAAAHsidCI6InRvcGljX2Nsb3NlIiwicm91dGUiOiJAdDpwMSIsImdlbiI6M30="
+    },
+    {
+      "name": "topic_credit",
+      "message": {
+        "t": "topic_credit",
+        "route": "@t:v2",
+        "gen": 3,
+        "frames": 40,
+        "bytes": 13000
+      },
+      "b64": "RgAAAHsidCI6InRvcGljX2NyZWRpdCIsInJvdXRlIjoiQHQ6djIiLCJnZW4iOjMsImZyYW1lcyI6NDAsImJ5dGVzIjoxMzAwMH0="
+    },
+    {
+      "name": "topic_unsub",
+      "message": {
+        "t": "topic_unsub",
+        "id": "s1"
+      },
+      "b64": "HQAAAHsidCI6InRvcGljX3Vuc3ViIiwiaWQiOiJzMSJ9"
+    },
+    {
+      "name": "topic_guard_ready",
+      "message": {
+        "t": "topic_guard_ready",
+        "id": "drive",
+        "handle": "@p:1",
+        "gen": 3,
+        "ticket": 1,
+        "timeoutMs": 400
+      },
+      "b64": "WQAAAHsidCI6InRvcGljX2d1YXJkX3JlYWR5IiwiaWQiOiJkcml2ZSIsImhhbmRsZSI6IkBwOjEiLCJnZW4iOjMsInRpY2tldCI6MSwidGltZW91dE1zIjo0MDB9"
+    },
+    {
+      "name": "topic_guard_heartbeat",
+      "message": {
+        "t": "topic_guard_heartbeat",
+        "handle": "@p:1",
+        "gen": 3,
+        "ticket": 1
+      },
+      "b64": "QAAAAHsidCI6InRvcGljX2d1YXJkX2hlYXJ0YmVhdCIsImhhbmRsZSI6IkBwOjEiLCJnZW4iOjMsInRpY2tldCI6MX0="
+    },
+    {
+      "name": "topic_guard_ticket",
+      "message": {
+        "t": "topic_guard_ticket",
+        "handle": "@p:1",
+        "gen": 3,
+        "ticket": 2
+      },
+      "b64": "PQAAAHsidCI6InRvcGljX2d1YXJkX3RpY2tldCIsImhhbmRsZSI6IkBwOjEiLCJnZW4iOjMsInRpY2tldCI6Mn0="
+    },
+    {
+      "name": "topic_guard_stop",
+      "message": {
+        "t": "topic_guard_stop",
+        "handle": "@p:1",
+        "gen": 3
+      },
+      "b64": "MAAAAHsidCI6InRvcGljX2d1YXJkX3N0b3AiLCJoYW5kbGUiOiJAcDoxIiwiZ2VuIjozfQ=="
+    },
+    {
+      "name": "topic_guard_closed",
+      "message": {
+        "t": "topic_guard_closed",
+        "handle": "@p:1",
+        "gen": 3,
+        "code": "guard_expired"
+      },
+      "b64": "SQAAAHsidCI6InRvcGljX2d1YXJkX2Nsb3NlZCIsImhhbmRsZSI6IkBwOjEiLCJnZW4iOjMsImNvZGUiOiJndWFyZF9leHBpcmVkIn0="
+    },
+    {
+      "name": "topic_guard_result",
+      "message": {
+        "t": "topic_guard_result",
+        "handle": "@p:1",
+        "gen": 3,
+        "seq": 10,
+        "outcome": "accepted",
+        "code": "",
+        "providerTs": 100.5
+      },
+      "b64": "bQAAAHsidCI6InRvcGljX2d1YXJkX3Jlc3VsdCIsImhhbmRsZSI6IkBwOjEiLCJnZW4iOjMsInNlcSI6MTAsIm91dGNvbWUiOiJhY2NlcHRlZCIsImNvZGUiOiIiLCJwcm92aWRlclRzIjoxMDAuNX0="
+    },
+    {
+      "name": "topic_error",
+      "message": {
+        "t": "topic_error",
+        "id": "s1",
+        "code": "source_offline",
+        "message": "Source interrupted",
+        "outcome": "interrupted"
+      },
+      "b64": "bAAAAHsidCI6InRvcGljX2Vycm9yIiwiaWQiOiJzMSIsImNvZGUiOiJzb3VyY2Vfb2ZmbGluZSIsIm1lc3NhZ2UiOiJTb3VyY2UgaW50ZXJydXB0ZWQiLCJvdXRjb21lIjoiaW50ZXJydXB0ZWQifQ=="
+    },
+    {
+      "name": "topic_list",
+      "message": {
+        "t": "topic_list",
+        "id": "l1",
+        "source": "workspace",
+        "prefix": "demo/",
+        "cursor": "",
+        "limit": 32
+      },
+      "b64": "WQAAAHsidCI6InRvcGljX2xpc3QiLCJpZCI6ImwxIiwic291cmNlIjoid29ya3NwYWNlIiwicHJlZml4IjoiZGVtby8iLCJjdXJzb3IiOiIiLCJsaW1pdCI6MzJ9"
+    },
+    {
+      "name": "topic_page",
+      "message": {
+        "t": "topic_page",
+        "id": "l1",
+        "source": "workspace",
+        "gen": 3,
+        "entries": [
+          {
+            "key": "demo/β/clock",
+            "encoding": "application/json",
+            "type": "",
+            "availability": "observed"
+          }
+        ],
+        "cursor": ""
+      },
+      "b64": "qwAAAHsidCI6InRvcGljX3BhZ2UiLCJpZCI6ImwxIiwic291cmNlIjoid29ya3NwYWNlIiwiZ2VuIjozLCJlbnRyaWVzIjpbeyJrZXkiOiJkZW1vL86yL2Nsb2NrIiwiZW5jb2RpbmciOiJhcHBsaWNhdGlvbi9qc29uIiwidHlwZSI6IiIsImF2YWlsYWJpbGl0eSI6Im9ic2VydmVkIn1dLCJjdXJzb3IiOiIifQ=="
+    },
+    {
+      "name": "topic_pub_result",
+      "message": {
+        "t": "topic_pub_result",
+        "id": "w1",
+        "outcome": "accepted",
+        "code": "",
+        "message": "",
+        "providerTs": 1752576000.5
+      },
+      "b64": "aAAAAHsidCI6InRvcGljX3B1Yl9yZXN1bHQiLCJpZCI6IncxIiwib3V0Y29tZSI6ImFjY2VwdGVkIiwiY29kZSI6IiIsIm1lc3NhZ2UiOiIiLCJwcm92aWRlclRzIjoxNzUyNTc2MDAwLjV9"
+    },
+    {
+      "name": "ping",
+      "message": {
+        "t": "ping",
+        "n": 7,
+        "ts": 1752576000.5
+      },
+      "b64": "JAAAAHsidCI6InBpbmciLCJuIjo3LCJ0cyI6MTc1MjU3NjAwMC41fQ=="
+    },
+    {
+      "name": "pong",
+      "message": {
+        "t": "pong",
+        "n": 7,
+        "ts": 1752576000.5
+      },
+      "b64": "JAAAAHsidCI6InBvbmciLCJuIjo3LCJ0cyI6MTc1MjU3NjAwMC41fQ=="
+    },
+    {
+      "name": "error_version",
+      "message": {
+        "t": "error",
+        "code": "version_mismatch",
+        "message": "protocol v8 required, versiune neacceptată"
+      },
+      "b64": "XwAAAHsidCI6ImVycm9yIiwiY29kZSI6InZlcnNpb25fbWlzbWF0Y2giLCJtZXNzYWdlIjoicHJvdG9jb2wgdjggcmVxdWlyZWQsIHZlcnNpdW5lIG5lYWNjZXB0YXTEgyJ9"
+    },
+    {
+      "name": "robots_two",
+      "message": {
+        "t": "robots",
+        "robots": [
+          {
+            "id": "go2-lab",
+            "name": "Go2 Laborator β",
+            "model": "unitree-go2"
+          },
+          {
+            "id": "arm-01",
+            "name": "Braț 01",
+            "model": "xarm7"
+          }
+        ]
+      },
+      "b64": "jAAAAHsidCI6InJvYm90cyIsInJvYm90cyI6W3siaWQiOiJnbzItbGFiIiwibmFtZSI6IkdvMiBMYWJvcmF0b3IgzrIiLCJtb2RlbCI6InVuaXRyZWUtZ28yIn0seyJpZCI6ImFybS0wMSIsIm5hbWUiOiJCcmHImyAwMSIsIm1vZGVsIjoieGFybTcifV19"
+    },
+    {
+      "name": "robots_empty",
+      "message": {
+        "t": "robots",
+        "robots": []
+      },
+      "b64": "GgAAAHsidCI6InJvYm90cyIsInJvYm90cyI6W119"
+    },
+    {
+      "name": "watch",
+      "message": {
+        "t": "watch",
+        "robotId": "go2-lab"
+      },
+      "b64": "IQAAAHsidCI6IndhdGNoIiwicm9ib3RJZCI6ImdvMi1sYWIifQ=="
+    },
+    {
+      "name": "manifest_reply",
+      "message": {
+        "t": "manifest",
+        "robotId": "go2-lab",
+        "manifest": {
+          "version": 1,
+          "channels": [
+            {
+              "ch": "odom",
+              "encoding": "pose.json.v1",
+              "delivery": "reliable",
+              "maxHz": 20.5
+            }
+          ],
+          "panels": [
+            {
+              "id": "pose",
+              "kind": "readout",
+              "title": "Poziție",
+              "channels": [
+                "odom"
+              ]
+            }
+          ],
+          "layout": "pose"
+        }
+      },
+      "b64": "9gAAAHsidCI6Im1hbmlmZXN0Iiwicm9ib3RJZCI6ImdvMi1sYWIiLCJtYW5pZmVzdCI6eyJ2ZXJzaW9uIjoxLCJjaGFubmVscyI6W3siY2giOiJvZG9tIiwiZW5jb2RpbmciOiJwb3NlLmpzb24udjEiLCJkZWxpdmVyeSI6InJlbGlhYmxlIiwibWF4SHoiOjIwLjV9XSwicGFuZWxzIjpbeyJpZCI6InBvc2UiLCJraW5kIjoicmVhZG91dCIsInRpdGxlIjoiUG96acibaWUiLCJjaGFubmVscyI6WyJvZG9tIl19XSwibGF5b3V0IjoicG9zZSJ9fQ=="
+    },
+    {
+      "name": "manifest_reply_bare",
+      "message": {
+        "t": "manifest",
+        "robotId": "arm-01"
+      },
+      "b64": "IwAAAHsidCI6Im1hbmlmZXN0Iiwicm9ib3RJZCI6ImFybS0wMSJ9"
+    },
+    {
+      "name": "sub",
+      "message": {
+        "t": "sub",
+        "ch": "color_image"
+      },
+      "b64": "HgAAAHsidCI6InN1YiIsImNoIjoiY29sb3JfaW1hZ2UifQ=="
+    },
+    {
+      "name": "unsub",
+      "message": {
+        "t": "unsub",
+        "ch": "color_image"
+      },
+      "b64": "IAAAAHsidCI6InVuc3ViIiwiY2giOiJjb2xvcl9pbWFnZSJ9"
+    },
+    {
+      "name": "subs_snapshot",
+      "message": {
+        "t": "subs",
+        "chs": [
+          "color_image",
+          "odom"
+        ],
+        "n": 3
+      },
+      "b64": "LwAAAHsidCI6InN1YnMiLCJjaHMiOlsiY29sb3JfaW1hZ2UiLCJvZG9tIl0sIm4iOjN9"
+    },
+    {
+      "name": "subs_empty",
+      "message": {
+        "t": "subs",
+        "chs": [],
+        "n": 4
+      },
+      "b64": "GwAAAHsidCI6InN1YnMiLCJjaHMiOltdLCJuIjo0fQ=="
+    },
+    {
+      "name": "teleop_start",
+      "message": {
+        "t": "teleop_start"
+      },
+      "b64": "FAAAAHsidCI6InRlbGVvcF9zdGFydCJ9"
+    },
+    {
+      "name": "teleop_started",
+      "message": {
+        "t": "teleop_started"
+      },
+      "b64": "FgAAAHsidCI6InRlbGVvcF9zdGFydGVkIn0="
+    },
+    {
+      "name": "teleop_stop",
+      "message": {
+        "t": "teleop_stop"
+      },
+      "b64": "EwAAAHsidCI6InRlbGVvcF9zdG9wIn0="
+    },
+    {
+      "name": "pub",
+      "message": {
+        "t": "pub",
+        "id": "s7k2β-1",
+        "ch": "human_input",
+        "data": {
+          "text": "Salut, robotule! β",
+          "urgency": 0.75
+        },
+        "clientTs": 1752576000.25
+      },
+      "b64": "fAAAAHsidCI6InB1YiIsImlkIjoiczdrMs6yLTEiLCJjaCI6Imh1bWFuX2lucHV0IiwiZGF0YSI6eyJ0ZXh0IjoiU2FsdXQsIHJvYm90dWxlISDOsiIsInVyZ2VuY3kiOjAuNzV9LCJjbGllbnRUcyI6MTc1MjU3NjAwMC4yNX0="
+    },
+    {
+      "name": "pub_no_client_ts",
+      "message": {
+        "t": "pub",
+        "id": "s7k2β-2",
+        "ch": "human_input",
+        "data": [
+          1.5,
+          "β",
+          true
+        ]
+      },
+      "b64": "RQAAAHsidCI6InB1YiIsImlkIjoiczdrMs6yLTIiLCJjaCI6Imh1bWFuX2lucHV0IiwiZGF0YSI6WzEuNSwizrIiLHRydWVdfQ=="
+    },
+    {
+      "name": "pub_null_data",
+      "message": {
+        "t": "pub",
+        "id": "s7k2β-3",
+        "ch": "human_input",
+        "data": null
+      },
+      "b64": "OgAAAHsidCI6InB1YiIsImlkIjoiczdrMs6yLTMiLCJjaCI6Imh1bWFuX2lucHV0IiwiZGF0YSI6bnVsbH0="
+    },
+    {
+      "name": "pub_ack",
+      "message": {
+        "t": "pub_ack",
+        "id": "s7k2β-1",
+        "ch": "human_input",
+        "relayTs": 1752576000.5,
+        "bridgeTs": 1752576000.75
+      },
+      "b64": "YgAAAHsidCI6InB1Yl9hY2siLCJpZCI6InM3azLOsi0xIiwiY2giOiJodW1hbl9pbnB1dCIsInJlbGF5VHMiOjE3NTI1NzYwMDAuNSwiYnJpZGdlVHMiOjE3NTI1NzYwMDAuNzV9"
+    },
+    {
+      "name": "pub_nack",
+      "message": {
+        "t": "pub_nack",
+        "id": "p3",
+        "code": "decode_failed",
+        "message": "text prea lung β"
+      },
+      "b64": "TwAAAHsidCI6InB1Yl9uYWNrIiwiaWQiOiJwMyIsImNvZGUiOiJkZWNvZGVfZmFpbGVkIiwibWVzc2FnZSI6InRleHQgcHJlYSBsdW5nIM6yIn0="
+    },
+    {
+      "name": "error_with_request_id",
+      "message": {
+        "t": "error",
+        "code": "rate_limited",
+        "message": "publish peste limită β",
+        "requestId": "s7k2β-1"
+      },
+      "b64": "XwAAAHsidCI6ImVycm9yIiwiY29kZSI6InJhdGVfbGltaXRlZCIsIm1lc3NhZ2UiOiJwdWJsaXNoIHBlc3RlIGxpbWl0xIMgzrIiLCJyZXF1ZXN0SWQiOiJzN2syzrItMSJ9"
+    },
+    {
+      "name": "rtc_ice",
+      "message": {
+        "t": "rtc_ice",
+        "iceServers": [
+          {
+            "urls": [
+              "stun:stun.cloudflare.com:3478"
+            ]
+          },
+          {
+            "urls": [
+              "turn:turn.cloudflare.com:3478?transport=udp",
+              "turns:turn.cloudflare.com:443?transport=tcp"
+            ],
+            "username": "utilizator-β",
+            "credential": "parolă-fixture"
+          }
+        ]
+      },
+      "b64": "6gAAAHsidCI6InJ0Y19pY2UiLCJpY2VTZXJ2ZXJzIjpbeyJ1cmxzIjpbInN0dW46c3R1bi5jbG91ZGZsYXJlLmNvbTozNDc4Il19LHsidXJscyI6WyJ0dXJuOnR1cm4uY2xvdWRmbGFyZS5jb206MzQ3OD90cmFuc3BvcnQ9dWRwIiwidHVybnM6dHVybi5jbG91ZGZsYXJlLmNvbTo0NDM/dHJhbnNwb3J0PXRjcCJdLCJ1c2VybmFtZSI6InV0aWxpemF0b3ItzrIiLCJjcmVkZW50aWFsIjoicGFyb2zEgy1maXh0dXJlIn1dfQ=="
+    },
+    {
+      "name": "rtc_offer_robot",
+      "message": {
+        "t": "rtc_offer",
+        "sdp": "v=0\r\no=- 4611731400430051336 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0 1\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\nc=IN IP4 0.0.0.0\r\na=mid:0\r\na=sendonly\r\na=rtpmap:96 H264/90000\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\nc=IN IP4 0.0.0.0\r\na=mid:1\r\na=sendonly\r\na=rtpmap:96 H264/90000\r\n",
+        "tracks": [
+          {
+            "ch": "color_image",
+            "mid": "0"
+          },
+          {
+            "ch": "rear_camera",
+            "mid": "1"
+          }
+        ]
+      },
+      "b64": "kAEAAHsidCI6InJ0Y19vZmZlciIsInNkcCI6InY9MFxyXG5vPS0gNDYxMTczMTQwMDQzMDA1MTMzNiAyIElOIElQNCAxMjcuMC4wLjFcclxucz0tXHJcbnQ9MCAwXHJcbmE9Z3JvdXA6QlVORExFIDAgMVxyXG5tPXZpZGVvIDkgVURQL1RMUy9SVFAvU0FWUEYgOTZcclxuYz1JTiBJUDQgMC4wLjAuMFxyXG5hPW1pZDowXHJcbmE9c2VuZG9ubHlcclxuYT1ydHBtYXA6OTYgSDI2NC85MDAwMFxyXG5tPXZpZGVvIDkgVURQL1RMUy9SVFAvU0FWUEYgOTZcclxuYz1JTiBJUDQgMC4wLjAuMFxyXG5hPW1pZDoxXHJcbmE9c2VuZG9ubHlcclxuYT1ydHBtYXA6OTYgSDI2NC85MDAwMFxyXG4iLCJ0cmFja3MiOlt7ImNoIjoiY29sb3JfaW1hZ2UiLCJtaWQiOiIwIn0seyJjaCI6InJlYXJfY2FtZXJhIiwibWlkIjoiMSJ9XX0="
+    },
+    {
+      "name": "rtc_offer_viewer",
+      "message": {
+        "t": "rtc_offer",
+        "sdp": "v=0\r\no=- 4611731400430051336 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0 1\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\nc=IN IP4 0.0.0.0\r\na=mid:0\r\na=sendonly\r\na=rtpmap:96 H264/90000\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\nc=IN IP4 0.0.0.0\r\na=mid:1\r\na=sendonly\r\na=rtpmap:96 H264/90000\r\n"
+      },
+      "b64": "RwEAAHsidCI6InJ0Y19vZmZlciIsInNkcCI6InY9MFxyXG5vPS0gNDYxMTczMTQwMDQzMDA1MTMzNiAyIElOIElQNCAxMjcuMC4wLjFcclxucz0tXHJcbnQ9MCAwXHJcbmE9Z3JvdXA6QlVORExFIDAgMVxyXG5tPXZpZGVvIDkgVURQL1RMUy9SVFAvU0FWUEYgOTZcclxuYz1JTiBJUDQgMC4wLjAuMFxyXG5hPW1pZDowXHJcbmE9c2VuZG9ubHlcclxuYT1ydHBtYXA6OTYgSDI2NC85MDAwMFxyXG5tPXZpZGVvIDkgVURQL1RMUy9SVFAvU0FWUEYgOTZcclxuYz1JTiBJUDQgMC4wLjAuMFxyXG5hPW1pZDoxXHJcbmE9c2VuZG9ubHlcclxuYT1ydHBtYXA6OTYgSDI2NC85MDAwMFxyXG4ifQ=="
+    },
+    {
+      "name": "rtc_offer_pull",
+      "message": {
+        "t": "rtc_offer",
+        "sdp": "v=0\r\no=- 4611731400430051336 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0 1\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\nc=IN IP4 0.0.0.0\r\na=mid:0\r\na=sendonly\r\na=rtpmap:96 H264/90000\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\nc=IN IP4 0.0.0.0\r\na=mid:1\r\na=sendonly\r\na=rtpmap:96 H264/90000\r\n",
+        "tracks": [
+          {
+            "ch": "color_image",
+            "mid": "3"
+          }
+        ],
+        "robotId": "go2-lab"
+      },
+      "b64": "hQEAAHsidCI6InJ0Y19vZmZlciIsInNkcCI6InY9MFxyXG5vPS0gNDYxMTczMTQwMDQzMDA1MTMzNiAyIElOIElQNCAxMjcuMC4wLjFcclxucz0tXHJcbnQ9MCAwXHJcbmE9Z3JvdXA6QlVORExFIDAgMVxyXG5tPXZpZGVvIDkgVURQL1RMUy9SVFAvU0FWUEYgOTZcclxuYz1JTiBJUDQgMC4wLjAuMFxyXG5hPW1pZDowXHJcbmE9c2VuZG9ubHlcclxuYT1ydHBtYXA6OTYgSDI2NC85MDAwMFxyXG5tPXZpZGVvIDkgVURQL1RMUy9SVFAvU0FWUEYgOTZcclxuYz1JTiBJUDQgMC4wLjAuMFxyXG5hPW1pZDoxXHJcbmE9c2VuZG9ubHlcclxuYT1ydHBtYXA6OTYgSDI2NC85MDAwMFxyXG4iLCJ0cmFja3MiOlt7ImNoIjoiY29sb3JfaW1hZ2UiLCJtaWQiOiIzIn1dLCJyb2JvdElkIjoiZ28yLWxhYiJ9"
+    },
+    {
+      "name": "rtc_answer",
+      "message": {
+        "t": "rtc_answer",
+        "sdp": "v=0\r\no=- 7 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0 1\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\nc=IN IP4 0.0.0.0\r\na=mid:0\r\na=recvonly\r\na=rtpmap:96 H264/90000\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\nc=IN IP4 0.0.0.0\r\na=mid:1\r\na=recvonly\r\na=rtpmap:96 H264/90000\r\n"
+      },
+      "b64": "NgEAAHsidCI6InJ0Y19hbnN3ZXIiLCJzZHAiOiJ2PTBcclxubz0tIDcgMiBJTiBJUDQgMTI3LjAuMC4xXHJcbnM9LVxyXG50PTAgMFxyXG5hPWdyb3VwOkJVTkRMRSAwIDFcclxubT12aWRlbyA5IFVEUC9UTFMvUlRQL1NBVlBGIDk2XHJcbmM9SU4gSVA0IDAuMC4wLjBcclxuYT1taWQ6MFxyXG5hPXJlY3Zvbmx5XHJcbmE9cnRwbWFwOjk2IEgyNjQvOTAwMDBcclxubT12aWRlbyA5IFVEUC9UTFMvUlRQL1NBVlBGIDk2XHJcbmM9SU4gSVA0IDAuMC4wLjBcclxuYT1taWQ6MVxyXG5hPXJlY3Zvbmx5XHJcbmE9cnRwbWFwOjk2IEgyNjQvOTAwMDBcclxuIn0="
+    },
+    {
+      "name": "rtc_stalled",
+      "message": {
+        "t": "rtc_stalled",
+        "ch": "color_image"
+      },
+      "b64": "JgAAAHsidCI6InJ0Y19zdGFsbGVkIiwiY2giOiJjb2xvcl9pbWFnZSJ9"
+    }
+  ]
+}

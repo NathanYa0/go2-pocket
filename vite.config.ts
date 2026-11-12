@@ -1,4 +1,5 @@
 import { defineConfig } from 'vite';
+import { mappingPlugin } from './src/mapping-plugin';
 import { robotProxyPlugin } from './src/proxy-plugin';
 
 export default defineConfig({
@@ -6,8 +7,9 @@ export default defineConfig({
   build: {
     outDir: 'dist',
   },
-  plugins: [robotProxyPlugin()],
+  plugins: [robotProxyPlugin(), mappingPlugin()],
   server: {
+    fs: { deny: ['**/.env', '**/.env.*', '**/*.{crt,pem}', '**/.git/**', '**/output/**', '**/vendor/**', '**/integrations/**'] },
     // Single unified WebSocket upgrade proxy for the BLE backend
     // (HTTP paths still go through robotProxyPlugin)
     proxy: {
@@ -27,6 +29,8 @@ export default defineConfig({
         '**/node_modules/**',
         '**/.git/**',
         '**/dist/**',
+        '**/vendor/**',
+        '**/output/**',
       ],
     },
   },

@@ -1,4 +1,5 @@
 import { exportFile } from '../mobile/files';
+import { validMapAnchor, type MapAnchor } from '../ui/map-anchor';
 // IndexedDB-backed cache for SLAM map artefacts, keyed by robot map ID.
 // The robot only has one physical slot, so we cache each saved map's full file
 // set here so it can be re-uploaded later for localization/navigation, and
@@ -13,6 +14,7 @@ export interface MapBundle {
   pcd: ArrayBuffer;
   pgm?: ArrayBuffer;
   txt?: ArrayBuffer;
+  anchor?: MapAnchor;
 }
 
 let dbPromise: Promise<IDBDatabase> | null = null;
@@ -155,6 +157,9 @@ export function bundleToZip(meta: MapMetadata, bundle: MapBundle): Uint8Array {
   };
   if (bundle.pgm) entries['map.pgm'] = new Uint8Array(bundle.pgm);
   if (bundle.txt) entries['map.txt'] = new Uint8Array(bundle.txt);
+  if (validMapAnchor(bundle.anchor) && bundle.anchor.mapId === meta.id) {
+    entries['anchor.json'] = strToU8(JSON.stringify(bundle.anchor));
+  }
   return zipSync(entries);
 }
 
@@ -183,6 +188,11 @@ export function zipToBundle(zipBytes: Uint8Array): { meta: Partial<MapMetadata>;
   if (metaRaw) {
     try { meta = JSON.parse(strFromU8(metaRaw)); }
     catch { /* tolerate malformed metadata — caller will fill the gaps */ }
+  }
+  if (entries['anchor.json']) {
+    const anchor = JSON.parse(strFromU8(entries['anchor.json']));
+    if (!validMapAnchor(anchor) || anchor.mapId !== meta.id) throw new Error('Map anchor is invalid or belongs to another map');
+    bundle.anchor = anchor;
   }
   return { meta, bundle };
 }

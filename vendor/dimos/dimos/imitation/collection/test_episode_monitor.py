@@ -1,0 +1,332 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Unit tests for the EpisodeMonitor state machine.
+
+The module is constructed normally; only its boot side effects (the asyncio
+loop + RPC transport that `Module.__init__` starts) are patched out, and its
+`status` Out port is replaced with a mock so published EpisodeStatus events can
+be inspected. Drives the button/keyboard handlers directly and asserts on the
+state machine these events feed into `extract_episodes`.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Iterator
+import threading
+
+from pydantic import ValidationError
+import pytest
+import pytest_mock
+
+from dimos.imitation.collection.episode import EpisodeStatus
+from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
+from dimos.protocol.rpc.pubsubrpc import LCMRPC
+from dimos.teleop.webxr.controller_types import BUTTON_ALIASES, Buttons
+from dimos.teleop.webxr.module import WebXRTeleopModule
+
+
+@pytest.fixture
+def make_monitor(
+    mocker: pytest_mock.MockerFixture,
+) -> Iterator[Callable[..., EpisodeMonitorModule]]:
+    """Factory for an EpisodeMonitorModule with its boot patched out.
+
+    `Module.__init__` starts an asyncio loop + RPC transport; patch both so the
+    test exercises only the state machine. The `status` port is a mock whose
+    `publish` calls record the emitted EpisodeStatus. Every built module is
+    stopped on teardown.
+    """
+    mocker.patch("dimos.core.module.get_loop", return_value=(mocker.MagicMock(), None))
+    mocker.patch.object(LCMRPC, "__init__", return_value=None)
+    mocker.patch.object(LCMRPC, "serve_module_rpc", return_value=None)
+    mocker.patch.object(LCMRPC, "start", return_value=None)
+    mocker.patch.object(LCMRPC, "stop", return_value=None)
+
+    built: list[EpisodeMonitorModule] = []
+
+    def _make(**config: object) -> EpisodeMonitorModule:
+        config.setdefault("task", "pick up the block")
+        m = EpisodeMonitorModule(**config)
+        m.status = mocker.MagicMock()  # type: ignore[assignment]
+        built.append(m)
+        return m
+
+    yield _make
+    for m in built:
+        m.stop()
+
+
+def _events(monitor: EpisodeMonitorModule) -> list[EpisodeStatus]:
+    """The EpisodeStatus objects published on the monitor's `status` port."""
+    return [
+        EpisodeStatus.from_json(call.args[0].data) for call in monitor.status.publish.call_args_list
+    ]  # type: ignore[attr-defined]
+
+
+def _press(monitor: EpisodeMonitorModule, alias: str) -> None:
+    """Deliver one raw WebXR button tap, including its release."""
+    attr = BUTTON_ALIASES[alias]
+    pressed = Buttons()
+    pressed.set_attribute(attr, True)
+    monitor._on_buttons(pressed)
+    monitor._on_buttons(Buttons())
+
+
+@pytest.mark.parametrize("duration", [0.03, 0.06])
+def test_webxr_taps_start_save_and_discard_without_repeating_while_held(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+    mocker: pytest_mock.MockerFixture,
+    duration: float,
+) -> None:
+    monitor = make_monitor()
+    webxr = WebXRTeleopModule()
+    clock = mocker.patch("dimos.teleop.webxr.module.time.monotonic", return_value=0.0)
+    # Wire the monitor's declared input to the matching real WebXR output,
+    # as autoconnect does, replacing only the transport subscription boundary.
+    port = next(iter(monitor.inputs.values()))
+    mocker.patch.object(port, "subscribe", side_effect=getattr(webxr, port.name).subscribe)
+    mocker.patch("dimos.core.module.Module.start")
+    try:
+        monitor.start()
+        for offset, alias in enumerate(["B", "B", "B", "Y"]):
+            held = Buttons()
+            held.set_attribute(BUTTON_ALIASES[alias], True)
+            for timestamp, buttons in [
+                (float(offset), held),
+                (offset + duration / 2, held),
+                (offset + duration - 0.001, held),
+                (offset + duration, Buttons()),
+                (offset + duration + 0.06, Buttons()),
+            ]:
+                clock.return_value = timestamp
+                webxr._publish_buttons(buttons)
+
+        events = _events(monitor)
+        assert [event.last_event for event in events] == [
+            "init",
+            "start",
+            "save",
+            "start",
+            "discard",
+        ]
+        assert events[-1].episodes_saved == 1
+        assert events[-1].episodes_discarded == 1
+        assert events[-1].state == "idle"
+    finally:
+        monitor.stop()
+        webxr.stop()
+
+
+def test_toggle_starts_then_saves(make_monitor: Callable[..., EpisodeMonitorModule]) -> None:
+    m = make_monitor()  # default map: toggle=B, discard=Y
+    _press(m, "B")  # idle → recording
+    _press(m, "B")  # recording → idle (saved)
+
+    events = _events(m)
+    assert [e.last_event for e in events] == ["start", "save"]
+    assert events[-1].state == "idle"
+    assert events[-1].episodes_saved == 1
+    assert events[-1].episodes_discarded == 0
+    assert events[-1].task_label == "pick up the block"
+
+
+def test_rpc_commands_use_the_same_state_machine(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+) -> None:
+    m = make_monitor()
+
+    recording = m.command("toggle")
+    saved = m.command("toggle")
+
+    assert [event.last_event for event in _events(m)] == ["start", "save"]
+    assert recording.state == "recording"
+    assert saved.state == "idle"
+    assert saved.episodes_saved == 1
+
+
+def test_get_status_does_not_publish(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+) -> None:
+    m = make_monitor()
+    m.command("start")
+    event_count = len(_events(m))
+
+    status = m.get_status()
+
+    assert status.state == "recording"
+    assert status.last_event == "start"
+    assert len(_events(m)) == event_count
+
+
+def test_invalid_rpc_command_is_rejected_without_changing_state(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+) -> None:
+    m = make_monitor()
+
+    with pytest.raises(ValueError, match="unknown episode command"):
+        m.command("pause")  # type: ignore[arg-type]
+
+    assert m.get_status().state == "idle"
+    assert _events(m) == []
+
+
+def test_task_is_required(make_monitor: Callable[..., EpisodeMonitorModule]) -> None:
+    with pytest.raises(ValidationError, match="task"):
+        EpisodeMonitorModule()
+
+
+def test_discard_does_not_count_as_saved(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+) -> None:
+    m = make_monitor()
+    _press(m, "B")  # start
+    _press(m, "Y")  # discard
+
+    last = _events(m)[-1]
+    assert last.state == "idle"
+    assert last.episodes_saved == 0
+    assert last.episodes_discarded == 1
+
+
+def test_start_while_recording_autocommits_previous(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+) -> None:
+    m = make_monitor(button_map={"start": "A"})
+    _press(m, "A")
+    _press(m, "A")
+
+    last = _events(m)[-1]
+    assert last.last_event == "start"
+    assert last.state == "recording"
+    assert last.episodes_saved == 1  # the auto-committed one
+
+
+def test_published_status_is_internally_consistent(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+) -> None:
+    # Every published event's counters/state must match the event it carries —
+    # the snapshot is taken under the same lock as the mutation.
+    m = make_monitor()
+    _press(m, "B")  # start
+    _press(m, "B")  # save  (1)
+    _press(m, "B")  # start
+    _press(m, "B")  # save  (2)
+    _press(m, "B")  # start
+    _press(m, "Y")  # discard (1)
+
+    events = _events(m)
+    for e in events:
+        if e.last_event == "start":
+            assert e.state == "recording"
+        elif e.last_event in ("save", "discard"):
+            assert e.state == "idle"
+    assert events[-1].episodes_saved == 2
+    assert events[-1].episodes_discarded == 1
+
+
+def test_shutdown_leaves_recording_incomplete(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+) -> None:
+    m = make_monitor()
+    _press(m, "B")
+
+    m.stop()
+
+    last = _events(m)[-1]
+    assert last.last_event == "start"
+    assert last.state == "recording"
+    assert last.episodes_discarded == 0
+
+
+def test_invalid_button_mapping_fails_at_startup(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+) -> None:
+    with pytest.raises(ValidationError, match="unknown WebXR button mappings"):
+        make_monitor(button_map={"toggle": "not_a_button"})
+
+
+def test_duplicate_button_mapping_fails_at_startup(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+) -> None:
+    with pytest.raises(ValidationError, match="distinct WebXR button"):
+        make_monitor(button_map={"toggle": "B", "discard": "right_secondary"})
+
+
+def test_buttons_are_ignored_after_shutdown_begins(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+) -> None:
+    m = make_monitor()
+    m.stop()
+
+    _press(m, "B")
+
+    assert _events(m) == []
+
+
+def test_stop_waits_for_in_flight_transition_and_blocks_later_transitions(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+) -> None:
+    class TrackingLock:
+        def __init__(self) -> None:
+            self._lock = threading.Lock()
+            self.shutdown_attempted = threading.Event()
+
+        def __enter__(self) -> None:
+            if threading.current_thread().name == "episode-monitor-shutdown":
+                self.shutdown_attempted.set()
+            self._lock.acquire()
+
+        def __exit__(self, *_: object) -> None:
+            self._lock.release()
+
+    m = make_monitor()
+    transition_lock = TrackingLock()
+    m._transition_lock = transition_lock  # type: ignore[assignment]
+    m._transition("start", 1.0)
+    emit_entered = threading.Event()
+    release_emit = threading.Event()
+    stop_done = threading.Event()
+    original_emit = m._emit
+
+    def blocking_emit(status: EpisodeStatus) -> EpisodeStatus:
+        emit_entered.set()
+        assert release_emit.wait(timeout=5.0)
+        return original_emit(status)
+
+    def stop_monitor() -> None:
+        m.stop()
+        stop_done.set()
+
+    m._emit = blocking_emit  # type: ignore[method-assign]
+    transition = threading.Thread(target=m._transition, args=("save", 2.0))
+    transition.start()
+    assert emit_entered.wait(timeout=5.0)
+
+    shutdown = threading.Thread(target=stop_monitor, name="episode-monitor-shutdown")
+    shutdown.start()
+    try:
+        assert transition_lock.shutdown_attempted.wait(timeout=5.0)
+        assert not stop_done.is_set()
+    finally:
+        release_emit.set()
+    transition.join(timeout=5.0)
+    shutdown.join(timeout=5.0)
+
+    assert stop_done.is_set()
+    assert not transition.is_alive()
+    assert not shutdown.is_alive()
+    event_count = len(_events(m))
+    m._transition("start", 3.0)
+    assert len(_events(m)) == event_count

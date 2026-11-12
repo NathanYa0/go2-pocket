@@ -1,3 +1,5 @@
+import { discoverLocalRobot, type FoundRobot } from './auto-discovery';
+import { scanForRobots } from './network-scan';
 import type { ConNotifyResponse, ConnectionCallbacks, SdpPayload } from '../types';
 import { aesEncrypt, aesDecrypt, aesGcmDecrypt, generateAesKey, hexToBytes } from '../crypto/aes';
 import { loadPublicKey, rsaEncrypt } from '../crypto/rsa';
@@ -124,28 +126,38 @@ export async function connectLocal(
   mode: 'AP' | 'STA-L',
   callbacks: ConnectionCallbacks,
   onStep?: (msg: string) => void,
-  opts: { sn?: string; promptKey?: AesKeyPrompter } = {},
+  opts: { sn?: string; promptKey?: AesKeyPrompter; signal?: AbortSignal; onResolved?: (robot: FoundRobot) => void } = {},
 ): Promise<WebRTCConnection> {
   log.webrtc.info(`${tag()} Connecting to ${ip} in ${mode} mode...`);
 
   onStep?.(`Detecting robot at ${ip}...`);
-  const method = await detectPort(ip);
+  let method: 'new' | 'old';
+  if (mode === 'STA-L') {
+    const robot = await discoverLocalRobot({ ip, sn: opts.sn || '', signal: opts.signal,
+      probe: detectPort, discover: sn => scanForRobots(cloudApi.connectFamily, undefined, sn), status: onStep });
+    ip = robot.ip; opts.sn = robot.sn; method = robot.method;
+    opts.onResolved?.(robot);
+  } else { method = await detectPort(ip); }
+  if (opts.signal?.aborted) throw new DOMException('Connection cancelled', 'AbortError');
   log.webrtc.info(`${tag()} Using ${method} method`);
 
   onStep?.('Creating WebRTC offer...');
   const webrtc = new WebRTCConnection(callbacks);
-  const sdpString = await webrtc.createOffer();
-  log.webrtc.info(`${tag()} Created WebRTC offer (${sdpString.length} bytes)`);
-
-  const id = mode === 'AP' ? 'abcd' : 'STA_localNetwork';
-  const sdpPayload: SdpPayload = {
-    id,
-    sdp: sdpString,
-    type: 'offer',
-    token: '',
-  };
-
+  const cancel = () => webrtc.close();
+  opts.signal?.addEventListener('abort', cancel, { once: true });
   try {
+    const sdpString = await webrtc.createOffer();
+    if (opts.signal?.aborted) throw new DOMException('Connection cancelled', 'AbortError');
+    log.webrtc.info(`${tag()} Created WebRTC offer (${sdpString.length} bytes)`);
+
+    const id = mode === 'AP' ? 'abcd' : 'STA_localNetwork';
+    const sdpPayload: SdpPayload = {
+      id,
+      sdp: sdpString,
+      type: 'offer',
+      token: '',
+    };
+
     let answerSdp: string;
 
     onStep?.('Exchanging SDP with robot...');
@@ -169,6 +181,7 @@ export async function connectLocal(
     log.webrtc.debug(`${tag()} media:`, mediaLines.join(' | ') || '(none)');
 
     onStep?.('Setting remote description...');
+    if (opts.signal?.aborted) throw new DOMException('Connection cancelled', 'AbortError');
     await webrtc.setAnswer(answerSdp);
     log.webrtc.info(`${tag()} Remote description set, waiting for connection...`);
 
@@ -176,7 +189,7 @@ export async function connectLocal(
   } catch (err) {
     webrtc.close();
     throw err;
-  }
+  } finally { opts.signal?.removeEventListener('abort', cancel); }
 }
 
 async function exchangeSdpNew(

@@ -1,0 +1,1130 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""RelayBridgeModule: the robot side of the cockpit relay.
+
+Registers the robot (id + manifest) with a relay - spawned locally in
+--local-relay mode, or a remote one via relay_url - and forwards robot streams
+to it. The advertised channels/panels/layout come from the manifest: authored
+by a cockpit(...) blueprint (dimos/web/cockpit.py), or built at start by
+default_manifest() from whatever inputs are available. Encoding is lazy: an
+input is subscribed for encoding, and frames are encoded, only while the relay
+reports at least one viewer subscribed to that channel, so a robot with no
+open cockpit does no encode work. Channels with resend_on_subscribe
+additionally keep one always-on raw subscription (decode only, never encode)
+so the newest message can be replayed the moment a channel gains its first
+viewer, even when the producer went quiet before that.
+
+Threading: input callbacks fire on the transport (LCM) thread, which gates on
+maxHz and encodes there (RerunBridge precedent, ~3 ms per JPEG), then hands
+the payload to the module event loop; all relay/session state lives on the
+loop. A resend_on_subscribe replay encodes on a worker thread
+(asyncio.to_thread): a voxel map takes up to seconds, and the loop must keep
+serving control messages and the teleop deadman meanwhile. The live encode
+counter fences a late replay behind any newer live frame. A channel's encoder
+can therefore run on both threads at once (a replay and a live frame), so
+encoders must be pure functions of their message (docs/web/bridge.md). The
+supervisor task consumes relay subs snapshots and survives relay restarts
+(respawning the local child when it died).
+"""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import AsyncIterator, Callable, Sequence
+import copy
+from dataclasses import dataclass, field, replace
+import functools
+import importlib.util
+from pathlib import Path
+import threading
+import time
+from typing import TYPE_CHECKING, Any, TypeVar
+import webbrowser
+
+from reactivex.disposable import Disposable
+
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.core import rpc
+from dimos.core.module import Module
+from dimos.core.stream import In, Out
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.utils.logging_config import setup_logger
+from dimos.web.codecs import EncodedPayload, encoder_definition
+
+# Imported for its registration side effect: the built-in encoders must be in
+# the codec registry wherever this module runs (parent and worker).
+from dimos.web.relay_bridge import builtin_codecs  # noqa: F401
+from dimos.web.relay_bridge.channels import BUILTIN_CHANNELS, TX_CHANNELS, RuntimeChannelSpec
+from dimos.web.relay_bridge.config import RelayBridgeConfig, default_manifest, resolve_robot_info
+from dimos.web.relay_bridge.locate import find_web_dir
+from dimos.web.relay_bridge.manifest import TRACK_ENCODING, parse_manifest
+from dimos.web.relay_bridge.pacing import (
+    FrameMeta,
+    PacedSender,
+    Sender,
+    passes_rate_gate,
+    passes_sampling_gate,
+)
+from dimos.web.relay_bridge.protocol import (
+    MAX_RTC_TRACKS,
+    ChannelSpec,
+    DataFrame,
+    IceServer,
+    Msg,
+    RobotInfo,
+    RobotManifest,
+    RtcAnswer,
+    RtcIce,
+    RtcOffer,
+    RtcStalled,
+    Stop as WireStop,
+    Subs,
+    TeleopStart as WireTeleopStart,
+    TeleopStop as WireTeleopStop,
+    Twist as WireTwist,
+)
+from dimos.web.relay_bridge.publish import PublishHandler
+from dimos.web.relay_bridge.relay_process import RelayProcess, ensure_web_dist, probe_local_port
+from dimos.web.relay_bridge.teleop import Teleop, resolve_teleop_params
+from dimos.web.relay_bridge.wt_client import (
+    RelayClient,
+    RelayInfo,
+    RelayRejectedError,
+    fetch_relay_info,
+)
+
+if TYPE_CHECKING:
+    from dimos.web.relay_bridge.rtc_publisher import RtcPublisher
+
+logger = setup_logger()
+
+# aiortc is optional and slow to import (~150 ms): detected without importing,
+# imported lazily once a relay advertises WebRTC video.
+RTC_AVAILABLE = importlib.util.find_spec("aiortc") is not None
+
+_T = TypeVar("_T")
+
+_RECONNECT_PAUSE_S = 2.0
+_START_CONNECT_ATTEMPTS = 4
+# A bridge killed without a clean close keeps its robot id registered until
+# the relay's 30 s QUIC idle timeout; a restart inside that window waits it
+# out (well inside the 1200 s start RPC timeout).
+_CONFLICT_RETRY_S = 45.0
+
+# A SIGKILLed relay child sends no CONNECTION_CLOSE, so the QUIC session only
+# notices at idle timeout (tens of seconds). The child watchdog polls the
+# process instead and force-closes the session to trigger a prompt respawn.
+_CHILD_POLL_S = 1.0
+
+# Bounded wait for the build worker thread after cancelling it (the child
+# dies within the SIGTERM-to-SIGKILL grace; this adds a margin on top).
+_BUILD_CANCEL_WAIT_S = 8.0
+
+# Per-channel floor between "encoder failed" logs (a broken encoder on a
+# 30 Hz stream must not flood the log).
+_ENCODE_ERROR_LOG_S = 5.0
+
+# The relay's Cloudflare call for our WebRTC offer can fail without anything
+# reaching a robot (relay errors to robots are handshake-only), so an offer
+# the relay never answers is rebuilt and re-sent with backoff.
+_RTC_ANSWER_TIMEOUT_S = 15.0
+_RTC_RETRY_BASE_S = 2.0
+_RTC_RETRY_MAX_S = 30.0
+
+
+async def _blocking_call(func: Callable[..., _T], *args: Any) -> _T:
+    """Run blocking process work without abandoning its thread on cancellation."""
+    work = asyncio.create_task(asyncio.to_thread(func, *args))
+    cancelled: asyncio.CancelledError | None = None
+    while not work.done():
+        try:
+            await asyncio.shield(work)
+        except asyncio.CancelledError as exc:
+            cancelled = cancelled or exc
+        except BaseException:
+            break
+    try:
+        result = work.result()
+    except BaseException as exc:
+        if cancelled is not None:
+            raise cancelled from exc
+        raise
+    if cancelled is not None:
+        raise cancelled
+    return result
+
+
+async def _cancel_task(task: asyncio.Task[None] | None, name: str) -> None:
+    if task is None:
+        return
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        # A task that already died re-raises here; teardown must continue.
+        logger.exception(f"relay bridge {name} task failed during teardown")
+
+
+@dataclass(slots=True)
+class _Session:
+    client: RelayClient
+    senders: dict[str, Sender]
+    last_n: int | float = 0
+    unsubs: dict[str, Callable[[], None]] = field(default_factory=dict)
+    retired: threading.Event = field(default_factory=threading.Event)
+    # In-flight cached-message replays, at most one per channel: the encode
+    # runs in a worker thread (asyncio.to_thread) and the task offers on the
+    # loop when it returns. Strong refs: the loop only weakly holds tasks.
+    replays: dict[str, asyncio.Task[None]] = field(default_factory=dict)
+    # module.encoded[ch] as of the channel's latest 0->1 transition: a replay
+    # that finishes after the counter moved lost to a live frame and is
+    # dropped.
+    replay_fence: dict[str, int] = field(default_factory=dict)
+    rtc_channels: frozenset[str] = frozenset()
+    # The latest rtc_ice: the relay re-mints TURN credentials hourly.
+    ice_servers: list[IceServer] = field(default_factory=list)
+    rtc: RtcPublisher | None = None
+    rtc_task: asyncio.Task[None] | None = None
+    rtc_answer: asyncio.Future[str] | None = None
+
+
+def _make_rtc_publisher(channels: Sequence[str]) -> RtcPublisher:
+    """Test seam. Lazy import: aiortc is optional (see RTC_AVAILABLE)."""
+    from dimos.web.relay_bridge.rtc_publisher import RtcPublisher
+
+    return RtcPublisher(channels)
+
+
+class RelayBridgeModule(Module):
+    """Bridges robot streams to the relay; encodes only while viewers watch."""
+
+    config: RelayBridgeConfig
+    # Exact producer types (GO2Connection/CostMapper outputs) so autoconnect
+    # matches.
+    color_image: In[Image]
+    odom: In[PoseStamped]
+    global_costmap: In[OccupancyGrid]
+    # tx: cockpit teleop twists, autoconnected by name+type to
+    # MovementManager.tele_cmd_vel (publish is a no-op while unwired).
+    tele_cmd_vel: Out[Twist]
+    # NEVER add handle_color_image/handle_odom methods here: _auto_bind_handlers
+    # subscribes any handle_<input> eagerly at start(), defeating lazy encode.
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._relay: RelayProcess | None = None
+        self._build_cancel: threading.Event | None = None
+        self._session: _Session | None = None
+        self._url: str | None = None
+        self._ca: str | None = None
+        self._key: str | None = None
+        # Last /api/info discovery (for logs and tests).
+        self._relay_info: RelayInfo | None = None
+        # Resolved config.serve_dir, kept for relay-child respawns.
+        self._serve_dir: Path | None = None
+        self._robot_info: RobotInfo | None = None
+        self._manifest: RobotManifest | None = None
+        self._channel_specs: tuple[RuntimeChannelSpec, ...] = ()
+        # Viewer publishes on tx channels (decoder resolved); the rx machinery
+        # (_reconcile, rate gates, encode counters) never sees them.
+        self._publish: PublishHandler | None = None
+        self._min_interval: dict[str, float] = {}
+        # Per-channel sampling schedule (next due time) for the maxHz gate.
+        self._next_due: dict[str, float] = {}
+        # Last "encoder failed" log time per channel: a broken encoder on a
+        # 30 Hz stream must not flood the log (rate gated like the inputs).
+        self._encode_error_logged: dict[str, float] = {}
+        # Newest raw message (+ arrival wall time, the replay's frame ts) per
+        # resend_on_subscribe channel; written on the transport thread, read
+        # on the loop (GIL-atomic dict swap), and kept across sessions so a
+        # reconnect replays too. Pins the full grid (MBs, one per channel);
+        # encoding stays lazy.
+        self._last_msg: dict[str, tuple[Any, float]] = {}
+        # None: the manifest advertises no teleop channel, so every teleop
+        # message is ignored.
+        self._teleop: Teleop | None = None
+        # Live-path encode counters, keyed by the advertised rx channels at
+        # start (main() fills it once the manifest resolves).
+        self.encoded: dict[str, int] = {}
+        self._rtc_unavailable_logged = False
+
+    @rpc
+    def relay_endpoint(self) -> dict[str, str] | None:
+        """The relay HTTP endpoint and robot identity, once the bridge is connected."""
+        if self._session is None or self._url is None or self._robot_info is None:
+            return None
+        return {"url": self._url, "robot": self._robot_info.id}
+
+    async def main(self) -> AsyncIterator[None]:
+        supervisor: asyncio.Task[None] | None = None
+        try:
+            self._robot_info = resolve_robot_info(self.config)
+            manifest_data = self.config.manifest
+            if self.config.channels is not None and manifest_data is None:
+                raise RuntimeError(
+                    "channels runtime specs require a manifest; author both through cockpit()"
+                )
+            if manifest_data is None:
+                allowed = (
+                    None
+                    if self.config.available_channels is None
+                    else frozenset(self.config.available_channels)
+                )
+                available = tuple(
+                    b.ch
+                    for b in BUILTIN_CHANNELS
+                    if (allowed is None or b.ch in allowed)
+                    and self.inputs[b.ch].transport is not None
+                )
+                # tx side: an Out gets a transport whether or not anything
+                # consumes it, so availability comes from the composition
+                # (with_relay_bridge scans the blueprint's consumers).
+                available += tuple(
+                    ch for ch, _, _ in TX_CHANNELS if allowed is not None and ch in allowed
+                )
+                manifest_data = default_manifest(self.config, available)
+            # The domain parser is the authority: an invalid manifest fails
+            # module start instead of poisoning the relay.
+            manifest = parse_manifest(manifest_data)
+            rx_wire = [spec for spec in manifest.channels if spec.dir == "rx"]
+            pub_specs: dict[str, RuntimeChannelSpec] = {}
+            if self.config.channels is not None:
+                self._channel_specs, pub_specs = self._adopt_authored_specs(manifest.channels)
+            else:
+                self._channel_specs = self._resolve_builtin_specs(rx_wire)
+            self._publish = PublishHandler(self._robot_info.id, pub_specs, self.outputs)
+            self._min_interval = {s.ch: 1.0 / s.max_hz for s in self._channel_specs}
+            self.encoded = {s.ch: 0 for s in self._channel_specs}
+            by_tx = {ch: (encoding, delivery) for ch, encoding, delivery in TX_CHANNELS}
+            for spec in manifest.channels:
+                if spec.dir != "tx" or spec.publish != "none":
+                    # Publish tx channels are declaration-driven (adopted
+                    # above); the static tx table covers only the
+                    # specialized protocol paths.
+                    continue
+                if by_tx.get(spec.ch) != (spec.encoding, spec.delivery):
+                    raise RuntimeError(
+                        f"manifest tx channel {spec.ch!r} ({spec.encoding}/{spec.delivery}) has "
+                        f"no matching handler; this bridge supports: {sorted(by_tx)}"
+                    )
+                if spec.ch == "tele_cmd_vel":
+                    self._teleop = Teleop(resolve_teleop_params(spec), self.tele_cmd_vel.publish)
+            # No runtime stream probing: an authored channel whose input got
+            # no transport stays advertised (its panel shows "waiting for
+            # data"); _reconcile just never subscribes it.
+            unwired = sorted(
+                s.ch for s in self._channel_specs if self.inputs[s.ch].transport is None
+            )
+            if unwired:
+                logger.info(
+                    f"relay bridge: channels {unwired} advertised without a wired input; "
+                    "their panels will wait for data"
+                )
+            for s in self._channel_specs:
+                if s.resend_on_subscribe and self.inputs[s.ch].transport is not None:
+                    # Always-on raw cache: grids published before the first
+                    # viewer, or while nobody watches, must still be
+                    # replayable on the next 0->1 subscribe.
+                    self.register_disposable(
+                        Disposable(
+                            self.inputs[s.ch].subscribe(functools.partial(self._cache_input, s))
+                        )
+                    )
+            self._manifest = manifest.model_dump()
+            self._url = self.config.relay_url or self.config.g.relay_url
+            self._ca = self.config.relay_ca if self._url is not None else None
+            self._key = self.config.relay_key if self._url is not None else None
+            if self._url is not None and self.config.serve_dir is not None:
+                raise RuntimeError(
+                    "serve_dir requires the spawned local relay (--local-relay); "
+                    "an external relay (--relay-url) cannot serve local files"
+                )
+            if self.config.rtc_file is not None:
+                if self._url is not None:
+                    raise RuntimeError(
+                        "rtc_file requires the spawned local relay (--local-relay); "
+                        "an external relay (--relay-url) carries its own Cloudflare configuration"
+                    )
+                if not Path(self.config.rtc_file).is_file():
+                    raise RuntimeError(f"rtc_file does not exist: {self.config.rtc_file}")
+            if self._url is None:
+                # Probe before the (expensive) build: a start that will lose
+                # the port must not rewrite the dist a running relay serves.
+                probe_local_port(self.config.local_port)
+                # Before the build too: fail fast on a typo'd directory.
+                self._serve_dir = self._resolve_serve_dir()
+                if self.config.web_build:
+                    try:
+                        await self._build_web_dist()
+                    except Exception:
+                        logger.exception("web build failed; continuing with the relay only")
+                self._url = await _blocking_call(
+                    self._spawn_relay, self.config.open_browser, self._serve_dir
+                )
+            # Startup retries transient discovery/connection failures a few
+            # times, and waits longer only for a robot id the relay still holds.
+            session = await self._first_session()
+            self._session = session
+            supervisor = asyncio.create_task(self._supervise(session))
+            assert self._relay_info is not None
+            logger.info(
+                f"relay bridge up: robot={self._robot_info.id} relay={self._url} "
+                f"wt={self._relay_info.wt_url}"
+            )
+            yield
+        finally:
+            try:
+                await _cancel_task(supervisor, "supervisor")
+                await self._disconnect()
+            finally:
+                if self._relay is not None:
+                    try:
+                        await _blocking_call(self._relay.stop)
+                    except Exception:
+                        # An orphaned Deno child would outlive this process holding
+                        # its port (it has no PDEATHSIG), so surface cleanup failure.
+                        logger.exception("relay bridge: stopping the local relay failed")
+
+    def _resolve_serve_dir(self) -> Path | None:
+        """Validated config.serve_dir; a clean labeled error beats the
+        relay child dying with a stderr-tail dump."""
+        if self.config.serve_dir is None:
+            return None
+        path = Path(self.config.serve_dir)
+        if not path.is_dir():
+            raise RuntimeError(
+                f"serve_dir does not exist or is not a directory: {self.config.serve_dir}"
+            )
+        return path
+
+    async def _build_web_dist(self) -> None:
+        """Build the web dists (checkouts only) before spawning the relay.
+
+        The blocking build runs in a thread but stays cancellable: on
+        cancellation (or module close, via _close_module) the build child is
+        killed and the worker reaped within a bounded grace, so teardown
+        never waits out the 600 s build timeout.
+        """
+        cancel = threading.Event()
+        self._build_cancel = cancel
+        work = asyncio.create_task(
+            asyncio.to_thread(ensure_web_dist, find_web_dir(), cancel=cancel)
+        )
+        try:
+            await asyncio.shield(work)
+        except (asyncio.CancelledError, GeneratorExit):
+            # Generator finalization (aclose) delivers GeneratorExit instead
+            # of CancelledError; both mean the same thing here.
+            cancel.set()
+            await asyncio.wait({work}, timeout=_BUILD_CANCEL_WAIT_S)
+            raise
+        finally:
+            self._build_cancel = None
+
+    def _close_module(self) -> None:
+        # Runs on every stop path, including a stop() racing a still-starting
+        # main(): an in-flight web build must die now, not at its timeout.
+        cancel = self._build_cancel
+        if cancel is not None:
+            cancel.set()
+        super()._close_module()
+
+    def _adopt_authored_specs(
+        self, wire_channels: list[ChannelSpec]
+    ) -> tuple[tuple[RuntimeChannelSpec, ...], dict[str, RuntimeChannelSpec]]:
+        """cockpit() compiled config.channels together with the manifest;
+        cross-check the pair and finish config-dependent params.
+
+        Every advertised field that drives runtime behavior must agree, so a
+        stale or independently overridden half fails start instead of gating
+        and encoding differently from what viewers were told. The codec
+        callables and the internal resend flag are runtime-only and not
+        advertised, so they have no wire side to compare against. Returns
+        (rx specs, publish tx specs by channel); publish="none" tx channels
+        (teleop) stay with the static tx table.
+        """
+        assert self.config.channels is not None
+        by_ch = {s.ch: s for s in self.config.channels}
+        covered = [w for w in wire_channels if w.dir == "rx" or w.publish != "none"]
+        if {w.ch for w in covered} != set(by_ch):
+            raise RuntimeError(
+                f"manifest rx/publish channels {sorted(w.ch for w in covered)} do not match "
+                f"the compiled runtime specs {sorted(by_ch)}; author both through cockpit()"
+            )
+        rx_specs = []
+        pub_specs: dict[str, RuntimeChannelSpec] = {}
+        for wire in covered:
+            spec = by_ch[wire.ch]
+            advertised = (
+                wire.dir,
+                wire.encoding,
+                wire.delivery,
+                float(wire.maxHz),
+                wire.params,
+                wire.publish,
+                wire.requiredScope,
+            )
+            compiled = (
+                spec.dir,
+                spec.encoding,
+                spec.delivery,
+                spec.max_hz,
+                spec.params,
+                spec.publish,
+                spec.required_scope,
+            )
+            if advertised != compiled:
+                raise RuntimeError(
+                    f"manifest channel {wire.ch!r} does not match its compiled runtime "
+                    "spec; author both through cockpit()"
+                )
+            if spec.publish == "exclusive":
+                raise RuntimeError(
+                    f"runtime spec {wire.ch!r} sets publish='exclusive'; exclusive "
+                    "publishers arrive with the lease ticket (W8)"
+                )
+            if spec.dir == "rx":
+                if wire.ch not in self.inputs:
+                    raise RuntimeError(
+                        f"runtime spec {wire.ch!r} has no matching input port "
+                        f"on {type(self).__name__}"
+                    )
+                port_type = self.inputs[wire.ch].type
+                if port_type is not spec.message_type:
+                    raise RuntimeError(
+                        f"runtime spec {wire.ch!r} message type "
+                        f"{spec.message_type.__qualname__} does not match the "
+                        f"{type(self).__name__} port type {port_type.__qualname__}"
+                    )
+                rx_specs.append(self._finalize_spec(spec))
+                continue
+            if spec.decoder is None:
+                raise RuntimeError(
+                    f"publish spec {wire.ch!r} has no resolved decoder; author "
+                    "both through cockpit()"
+                )
+            if wire.ch not in self.outputs:
+                raise RuntimeError(
+                    f"runtime spec {wire.ch!r} has no matching output port on {type(self).__name__}"
+                )
+            out_type = self.outputs[wire.ch].type
+            if out_type is not spec.message_type:
+                raise RuntimeError(
+                    f"runtime spec {wire.ch!r} message type "
+                    f"{spec.message_type.__qualname__} does not match the "
+                    f"{type(self).__name__} port type {out_type.__qualname__}"
+                )
+            pub_specs[wire.ch] = spec
+        return tuple(rx_specs), pub_specs
+
+    def _resolve_builtin_specs(self, rx_wire: list[ChannelSpec]) -> tuple[RuntimeChannelSpec, ...]:
+        """Runtime specs for a hand-written or auto (default_manifest)
+        manifest: every rx channel must be a built-in declaration, with its
+        encoder taken from the codec registry."""
+        by_ch = {b.ch: b for b in BUILTIN_CHANNELS}
+        specs = []
+        for wire in rx_wire:
+            builtin = by_ch.get(wire.ch)
+            if (
+                builtin is None
+                or builtin.encoding != wire.encoding
+                or builtin.delivery != wire.delivery
+            ):
+                raise RuntimeError(
+                    f"manifest channel {wire.ch!r} ({wire.encoding}/{wire.delivery}) has no "
+                    f"matching encoder; this bridge supports: {sorted(by_ch)}"
+                )
+            definition = encoder_definition(wire.encoding)
+            assert definition is not None, wire.encoding  # built-ins register at import
+            specs.append(
+                self._finalize_spec(
+                    RuntimeChannelSpec(
+                        ch=wire.ch,
+                        message_type=definition.message_type,
+                        dir="rx",
+                        encoding=wire.encoding,
+                        delivery=wire.delivery,
+                        max_hz=float(wire.maxHz),
+                        params=dict(wire.params),
+                        encoder=definition.encode,
+                        encoder_takes_params=definition.takes_params,
+                        resend_on_subscribe=builtin.resend_on_subscribe,
+                    )
+                )
+            )
+        return tuple(specs)
+
+    def _finalize_spec(self, spec: RuntimeChannelSpec) -> RuntimeChannelSpec:
+        """Merge config-driven defaults under a built-in channel's params and
+        run the codec's params check, so a bad authored value (jpeg quality)
+        fails module start, not the first frame."""
+        params = dict(spec.params)
+        builtin = next((b for b in BUILTIN_CHANNELS if b.ch == spec.ch), None)
+        if builtin is not None:
+            params = {**builtin.default_params(self.config), **params}
+        definition = encoder_definition(spec.encoding)
+        if definition is not None and definition.check_params is not None:
+            try:
+                definition.check_params(params)
+            except ValueError as e:
+                raise RuntimeError(f"manifest channel {spec.ch!r} {e}") from e
+        return replace(spec, params=params)
+
+    def _run_encoder(self, spec: RuntimeChannelSpec, msg: Any) -> tuple[bytes, FrameMeta] | None:
+        """One sample through the channel's encoder; None drops it (encoder
+        skip, failure, or a bad return type - failures are logged at most
+        once per channel per _ENCODE_ERROR_LOG_INTERVAL_S)."""
+        assert spec.encoder is not None
+        now = time.monotonic()
+        try:
+            out = spec.encoder(msg, spec.params) if spec.encoder_takes_params else spec.encoder(msg)
+        except Exception:
+            if passes_rate_gate(self._encode_error_logged, spec.ch, now, _ENCODE_ERROR_LOG_S):
+                logger.exception(f"relay bridge: encoding {spec.ch} failed")
+            return None
+        if out is None:
+            return None
+        if isinstance(out, EncodedPayload):
+            return out.payload, dict(out.meta) if out.meta is not None else None
+        if isinstance(out, (bytes, bytearray, memoryview)):
+            return bytes(out), None
+        if passes_rate_gate(self._encode_error_logged, spec.ch, now, _ENCODE_ERROR_LOG_S):
+            logger.error(
+                f"relay bridge: {spec.ch} encoder returned {type(out).__name__}; "
+                "expected bytes, EncodedPayload, or None"
+            )
+        return None
+
+    def _spawn_relay(self, open_browser: bool, serve_dir: Path | None) -> str:
+        """Start a fresh local relay child (blocking; run via to_thread) and
+        return its HTTP base URL."""
+        probe_local_port(self.config.local_port)
+        self._relay = RelayProcess(
+            port=self.config.local_port,
+            serve_dir=serve_dir,
+            rtc_file=None if self.config.rtc_file is None else Path(self.config.rtc_file),
+        )
+        info = self._relay.start()
+        logger.info(f"local relay ready: {info.open_url}")
+        if open_browser:
+            webbrowser.open_new_tab(info.open_url)
+        return info.open_url
+
+    async def _first_session(self) -> _Session:
+        """First connect: retry transient transport failures a few times and
+        wait out a robot id that a killed predecessor left registered."""
+        deadline = time.monotonic() + _CONFLICT_RETRY_S
+        announced = False
+        connection_failures = 0
+        while True:
+            try:
+                return await self._connect_and_hello()
+            except RelayRejectedError as e:
+                if e.code != "robot_id_conflict" or time.monotonic() >= deadline:
+                    raise
+                connection_failures = 0
+                if not announced:
+                    announced = True
+                    logger.warning(
+                        f"relay rejected hello ({e.message}); waiting up to "
+                        f"{_CONFLICT_RETRY_S:.0f} s for the stale registration to expire"
+                    )
+                await asyncio.sleep(_RECONNECT_PAUSE_S)
+            except (OSError, asyncio.TimeoutError) as e:
+                connection_failures += 1
+                if connection_failures >= _START_CONNECT_ATTEMPTS:
+                    raise
+                logger.info(
+                    f"relay startup connection attempt {connection_failures} failed ({e}); "
+                    "rediscovering and retrying"
+                )
+                await asyncio.sleep(_RECONNECT_PAUSE_S)
+
+    async def _connect_and_hello(self) -> _Session:
+        assert self._url is not None and self._robot_info is not None and self._manifest is not None
+        # Discovery on every connect: a restarted relay has a new QUIC port
+        # and certificate behind the same HTTP URL.
+        info = await fetch_relay_info(self._url, cafile=self._ca)
+        self._relay_info = info
+        manifest, rtc_channels = self._wire_manifest(info)
+        client = await RelayClient.connect(
+            info.wt_url, "robot", insecure=info.cert_hash is not None, cafile=self._ca
+        )
+        try:
+            await client.hello(robot=self._robot_info, manifest=manifest, token=self._key)
+            client.start_keepalive()
+            senders = self._build_senders(client, rtc_channels)
+        except BaseException:
+            try:
+                await client.close()
+            except Exception:
+                logger.exception("relay bridge: closing a failed relay session failed")
+            raise
+        return _Session(client, senders, rtc_channels=rtc_channels)
+
+    def _wire_manifest(self, info: RelayInfo) -> tuple[RobotManifest, frozenset[str]]:
+        """The manifest to register and the channels advertised as tracks.
+
+        Only this wire copy changes: the runtime specs keep their JPEG encoder,
+        which is never run for a track channel. Decided per connect, since a
+        relay restart can change it.
+        """
+        assert self._manifest is not None
+        track_chs = frozenset(s.ch for s in self._channel_specs if s.encoding == "jpeg.v1")
+        if not (info.rtc and self.config.rtc and track_chs):
+            return self._manifest, frozenset()
+        if not RTC_AVAILABLE:
+            if not self._rtc_unavailable_logged:
+                self._rtc_unavailable_logged = True
+                logger.warning(
+                    "relay bridge: the relay offers WebRTC video but aiortc is not installed "
+                    "(pip install 'dimos[webrtc]'); staying on JPEG"
+                )
+            return self._manifest, frozenset()
+        if len(track_chs) > MAX_RTC_TRACKS:
+            logger.warning(
+                f"relay bridge: {len(track_chs)} video channels exceed the {MAX_RTC_TRACKS} "
+                "WebRTC tracks per robot; staying on JPEG"
+            )
+            return self._manifest, frozenset()
+        manifest = copy.deepcopy(self._manifest)
+        for channel in manifest["channels"]:
+            if channel["ch"] in track_chs:
+                channel["encoding"] = TRACK_ENCODING
+                channel["params"] = {}  # jpeg quality means nothing to a track
+        return manifest, track_chs
+
+    def _build_senders(
+        self, client: RelayClient, rtc_channels: frozenset[str]
+    ) -> dict[str, Sender]:
+        senders: dict[str, Sender] = {}
+        for spec in self._channel_specs:
+            if spec.ch in rtc_channels:
+                continue  # a track channel sends nothing through the relay
+            sender: Sender
+            if spec.delivery == "latest":
+                sender = client.latest_writer(spec.ch).offer
+            else:
+                sender = functools.partial(self._send_reliable, client, spec.ch)
+            if spec.paced:
+                sender = PacedSender(
+                    asyncio.get_running_loop(), 1.0 / spec.max_hz, sender, name=spec.ch
+                )
+            senders[spec.ch] = sender
+        return senders
+
+    def _send_reliable(
+        self,
+        client: RelayClient,
+        ch: str,
+        payload: bytes,
+        meta: dict[str, Any] | None,
+        ts: float | None = None,
+    ) -> None:
+        client.send_frame(ch, payload, delivery="reliable", meta=meta, ts=ts)
+
+    async def _supervise(self, session: _Session) -> None:
+        """Consume relay control messages (subs snapshots, teleop); on session
+        loss, reconnect (and respawn a dead local relay child) until the
+        module stops."""
+        watchdog: asyncio.Task[None] | None = None
+        deadman: asyncio.Task[None] | None = None
+        teleop = self._teleop
+        publish = self._publish
+        assert publish is not None  # main() builds it before the supervisor starts
+        try:
+            if self._relay is not None:
+                watchdog = asyncio.create_task(self._watch_child())
+            if teleop is not None:
+                deadman = asyncio.create_task(teleop.watchdog())
+            while True:
+                crashed = False
+                try:
+                    async for msg in session.client.control_messages():
+                        if isinstance(msg, Subs) and msg.n > session.last_n:
+                            session.last_n = msg.n
+                            self._reconcile(session, set(msg.chs))
+                        elif isinstance(msg, DataFrame):
+                            # A forwarded viewer publish (tx channel data on
+                            # the carrier); never raises out of the loop.
+                            publish.on_frame(msg, functools.partial(self._send_pub_result, session))
+                        elif teleop is not None and isinstance(msg, WireTwist):
+                            teleop.on_twist(msg)
+                        elif teleop is not None and isinstance(msg, WireStop):
+                            teleop.on_stop(msg)
+                        elif teleop is not None and isinstance(msg, WireTeleopStart):
+                            teleop.on_start(msg)
+                        elif teleop is not None and isinstance(msg, WireTeleopStop):
+                            teleop.on_end(msg)
+                        elif isinstance(msg, RtcIce):
+                            self._on_rtc_ice(session, msg)
+                        elif isinstance(msg, RtcAnswer):
+                            self._on_rtc_answer(session, msg)
+                    # The iterator only ends when the session closed.
+                except Exception:
+                    # An unguarded error here would silently end supervision while
+                    # the module stays "up" (never CancelledError: stop() cancels).
+                    crashed = True
+                    logger.exception("relay bridge supervisor error; recycling the relay session")
+                await self._disconnect(session)
+                if crashed:
+                    # Reconnect only pauses on FAILED connects; without this a
+                    # persistent reconcile error would recycle at handshake speed.
+                    await asyncio.sleep(_RECONNECT_PAUSE_S)
+                logger.warning("relay session lost; encoders stopped, reconnecting")
+                reconnected = await self._reconnect()
+                if reconnected is None:
+                    return
+                session = reconnected
+                self._session = session
+        finally:
+            await _cancel_task(deadman, "teleop watchdog")
+            await _cancel_task(watchdog, "watchdog")
+            await self._disconnect(session)
+
+    def _on_rtc_ice(self, session: _Session, msg: RtcIce) -> None:
+        # The first rtc_ice starts the peer; every later one (a TURN credential
+        # refresh) is the set the next connect attempt uses.
+        session.ice_servers = list(msg.iceServers)
+        if session.rtc_channels and session.rtc_task is None:
+            session.rtc_task = asyncio.create_task(self._rtc_connect(session))
+
+    def _on_rtc_answer(self, session: _Session, msg: RtcAnswer) -> None:
+        waiter = session.rtc_answer
+        if waiter is None or waiter.done():
+            logger.warning("relay bridge: dropping an rtc_answer nobody is waiting for")
+            return
+        waiter.set_result(msg.sdp)
+
+    async def _rtc_connect(self, session: _Session) -> None:
+        """Build the SFU peer, offer through the relay, apply the answer and
+        watch the connection; any failure tears the peer down and re-offers
+        with backoff, with the latest ICE servers (a TURN allocation dies with
+        its credentials; the relay refreshes them hourly). An unanswered offer
+        is a failure too: relay errors never reach a robot. Off the supervisor
+        loop: ICE gathering must not delay teleop handling."""
+        attempt = 0
+        while not session.retired.is_set():
+            publisher = _make_rtc_publisher(sorted(session.rtc_channels))
+            try:
+                sdp, tracks = await publisher.start(session.ice_servers)
+                session.rtc_answer = asyncio.get_running_loop().create_future()
+                session.client.send_control_frame(RtcOffer(sdp=sdp, tracks=tracks))
+                answer = await asyncio.wait_for(session.rtc_answer, _RTC_ANSWER_TIMEOUT_S)
+                await publisher.accept(answer)
+                session.rtc = publisher
+                attempt = 0
+                logger.info(f"relay bridge: WebRTC video up for {sorted(session.rtc_channels)}")
+                state = await publisher.wait_lost()
+                raise RuntimeError(f"PeerConnection {state}")
+            except asyncio.CancelledError:
+                session.rtc = None
+                await publisher.close()
+                raise
+            except Exception as e:
+                session.rtc = None
+                await publisher.close()
+                session.rtc_answer = None
+                delay = min(_RTC_RETRY_BASE_S * 2**attempt, _RTC_RETRY_MAX_S)
+                attempt += 1
+                logger.warning(
+                    f"relay bridge: WebRTC video failed ({e!r}); re-offering in {delay:.0f} s"
+                )
+                await asyncio.sleep(delay)
+
+    def _send_pub_result(self, session: _Session, msg: Msg) -> None:
+        try:
+            session.client.send_control_frame(msg)
+        except Exception as e:
+            # A session death racing the result is routine; the relay's
+            # publish timeout covers the viewer side.
+            logger.warning(f"relay bridge: sending a publish result failed: {e}")
+
+    async def _watch_child(self) -> None:
+        """Close the session promptly when the local relay child dies (a kill
+        sends no CONNECTION_CLOSE; waiting for QUIC idle timeout is too slow).
+        The supervisor then respawns and reconnects."""
+        while True:
+            await asyncio.sleep(_CHILD_POLL_S)
+            relay, session = self._relay, self._session
+            if (
+                relay is not None
+                and not relay.is_running()
+                and session is not None
+                and not session.client.is_closed
+            ):
+                logger.warning("local relay child died; closing the session to reconnect")
+                await session.client.close()
+
+    async def _reconnect(self) -> _Session | None:
+        while True:
+            if self._relay is not None and not self._relay.is_running():
+                # The child is gone (crash, kill, or a previous respawn that
+                # failed): its QUIC port and cert die with it, so respawn and
+                # re-read the ready line. The browser page reconnects itself
+                # via the stable HTTP port. `not is_running()` rather than
+                # `poll() is not None`: a failed start leaves no process and
+                # poll() would read None forever, latching respawns off.
+                logger.warning("local relay child died; respawning")
+                try:
+                    await _blocking_call(self._relay.stop)
+                    self._url = await _blocking_call(self._spawn_relay, False, self._serve_dir)
+                except Exception:
+                    logger.exception("relay respawn failed; retrying")
+                    await asyncio.sleep(_RECONNECT_PAUSE_S)
+                    continue
+            try:
+                return await self._connect_and_hello()
+            except RelayRejectedError as e:
+                if e.code != "robot_id_conflict":
+                    logger.error(f"relay rejected reconnect ({e.code}: {e.message}); not retrying")
+                    return None
+                # Our own previous session may still be registered (no clean
+                # close reached the relay); it expires at the idle timeout.
+                logger.warning(f"relay still holds this robot id ({e.message}); retrying")
+                await asyncio.sleep(_RECONNECT_PAUSE_S)
+            except ValueError as e:
+                # Discovery answered something this bridge cannot use (protocol
+                # version, untrusted certificate): permanent, like a rejection.
+                logger.error(f"relay reconnect impossible ({e}); not retrying")
+                return None
+            except Exception as e:
+                logger.warning(f"relay reconnect failed ({e}); retrying")
+                await asyncio.sleep(_RECONNECT_PAUSE_S)
+
+    def _reconcile(self, session: _Session, want: set[str]) -> None:
+        """Subscribe/unsubscribe inputs so exactly `want` is being encoded."""
+        for spec in self._channel_specs:
+            active = spec.ch in session.unsubs
+            should = spec.ch in want
+            if should and not active:
+                if self.inputs[spec.ch].transport is None:
+                    # Advertised but unwired (manifest-authored): nothing to
+                    # subscribe; the panel shows "waiting for data".
+                    continue
+                if spec.ch in self._last_msg and spec.ch not in session.rtc_channels:
+                    # Replay off the loop (a voxel encode takes up to seconds;
+                    # control messages and the teleop deadman must keep
+                    # running). The live subscribe below does not wait for
+                    # it: the fence, read before subscribing, lets a late
+                    # replay see that a live frame already won the 1-slot
+                    # mailbox. Re-arming an in-flight replay (1->0->1 during
+                    # its encode) instead of starting another bounds the work
+                    # to one encode per channel at a time. The task reads the
+                    # raw cache itself, so a re-arm on a newer message replays
+                    # that one. Fires on 0->1 transitions only: the relay
+                    # reports sub-set changes and stays cache-free, so an
+                    # extra viewer on an already-active channel waits for the
+                    # next publish (review issue 2, deferred).
+                    session.replay_fence[spec.ch] = self.encoded[spec.ch]
+                    replay = session.replays.get(spec.ch)
+                    if replay is None or replay.done():
+                        session.replays[spec.ch] = asyncio.create_task(
+                            self._replay_cached(session, spec)
+                        )
+                session.unsubs[spec.ch] = self.inputs[spec.ch].subscribe(
+                    functools.partial(self._on_input, session, spec, session.senders.get(spec.ch))
+                )
+                logger.info(f"relay bridge: viewer subscribed to {spec.ch}; encoding started")
+            elif active and not should:
+                unsubscribe = session.unsubs[spec.ch]
+                unsubscribe()
+                del session.unsubs[spec.ch]
+                logger.info(f"relay bridge: no viewers on {spec.ch}; encoding stopped")
+        unknown = want - {spec.ch for spec in self._channel_specs}
+        if unknown:
+            logger.debug(f"relay bridge: ignoring unknown channels {sorted(unknown)}")
+
+    async def _replay_cached(self, session: _Session, spec: RuntimeChannelSpec) -> None:
+        """Encode the channel's cached message off the loop and offer it unless
+        a live frame beat it. The checks and the offer below run in one loop
+        step: a live frame's _offer is queued (call_soon_threadsafe) only after
+        its self.encoded increment on the transport thread, so that increment
+        is either already visible (fence moved: drop the older replay) or the
+        live offer is still queued and lands after this one, winning the
+        mailbox. A cache that moved during the encode with no live encode
+        behind it (published while nobody watched, then re-armed) is encoded
+        again: the viewers never keep a message older than the cache."""
+        while True:
+            # _reconcile armed on a cached entry, and entries are never removed.
+            msg, recv_ts = cached = self._last_msg[spec.ch]
+            encoded = await asyncio.to_thread(self._run_encoder, spec, msg)
+            if spec.ch not in session.unsubs:
+                return  # the viewers left during the encode
+            if self.encoded[spec.ch] != session.replay_fence.get(spec.ch):
+                return  # a live frame encoded since the arm is newer and wins
+            if self._last_msg[spec.ch] is not cached:
+                continue  # a newer message is cached and nothing live sent it
+            if encoded is not None:  # None: skip or failure, logged by _run_encoder
+                # self.encoded counts live-path encodes only; the arrival ts
+                # keeps a stale replay honest about its age.
+                self._offer(session, session.senders[spec.ch], *encoded, recv_ts)
+            return
+
+    def _on_input(
+        self, session: _Session, spec: RuntimeChannelSpec, sender: Sender | None, msg: Any
+    ) -> None:
+        """Transport-thread callback: maxHz gate, encode, hand to the loop."""
+        if session.retired.is_set():
+            return
+        now = time.monotonic()
+        if not spec.paced and not passes_sampling_gate(
+            self._next_due, spec.ch, now, self._min_interval[spec.ch]
+        ):
+            return
+        if spec.ch in session.rtc_channels:
+            # The raw image feeds the SFU peer; nothing rides the relay.
+            publisher = session.rtc
+            if publisher is not None:
+                if publisher.feed(spec.ch, msg):
+                    loop = self._loop
+                    if loop is not None and loop.is_running():
+                        loop.call_soon_threadsafe(self._report_stall, session, spec.ch)
+                self.encoded[spec.ch] += 1
+            return
+        assert sender is not None
+        encoded = self._run_encoder(spec, msg)
+        if encoded is None:
+            return
+        payload, meta = encoded
+        self.encoded[spec.ch] += 1
+        loop = self._loop
+        if loop is not None and loop.is_running():
+            loop.call_soon_threadsafe(self._offer, session, sender, payload, meta)
+
+    def _report_stall(self, session: _Session, ch: str) -> None:
+        """Loop callback: the track went unfed past the SFU's track lifetime
+        and flows again, so the relay must declare and pull it afresh."""
+        if session.retired.is_set() or self._session is not session:
+            return
+        logger.warning(
+            f"relay bridge: {ch} carried no video for the SFU's track lifetime; "
+            "asking the relay to pull it again"
+        )
+        try:
+            session.client.send_control_frame(RtcStalled(ch=ch))
+        except Exception:
+            # Session mid-teardown: the reconnect offers everything afresh.
+            return
+
+    def _cache_input(self, spec: RuntimeChannelSpec, msg: Any) -> None:
+        """Transport-thread callback: remember the newest raw message so a
+        0->1 subscribe can replay it (its arrival time becomes the frame ts)."""
+        self._last_msg[spec.ch] = (msg, time.time())
+
+    def _offer(
+        self,
+        session: _Session,
+        sender: Sender,
+        payload: bytes,
+        meta: FrameMeta,
+        ts: float | None = None,
+    ) -> None:
+        if session.retired.is_set() or self._session is not session:
+            return
+        try:
+            sender(payload, meta, ts)
+        except Exception:
+            # Session mid-teardown (dead writer pump / closed connection): the
+            # supervisor is already reconnecting and will rebuild the senders.
+            return
+
+    async def _disconnect(self, session: _Session | None = None) -> None:
+        target = self._session if session is None else session
+        if target is None:
+            return
+        target.retired.set()
+        if self._session is target:
+            self._session = None
+        for sender in target.senders.values():
+            if isinstance(sender, PacedSender):
+                sender.close()
+        if self._teleop is not None:
+            self._teleop.session_ended()
+        for ch, unsubscribe in tuple(target.unsubs.items()):
+            try:
+                unsubscribe()
+            except Exception:
+                logger.exception(f"relay bridge: unsubscribing {ch} failed")
+            finally:
+                target.unsubs.pop(ch, None)
+        # In-flight replays die with the session: cancel() detaches the task
+        # at its to_thread await on the next tick (the worker thread finishes
+        # its encode and its result lands on a cancelled future), so this
+        # never waits out an encode and no replay task outlives its session.
+        replays = dict(target.replays)
+        target.replays.clear()
+        for ch, task in replays.items():
+            await _cancel_task(task, f"{ch} replay")
+        # The connect task owns the SFU peer and closes it when cancelled.
+        await _cancel_task(target.rtc_task, "WebRTC connect")
+        target.rtc_task = None
+        target.rtc = None
+        try:
+            await target.client.close()
+        except Exception:
+            logger.exception("relay bridge: closing the relay session failed")
+
+
+def with_relay_bridge(blueprint: Blueprint) -> Blueprint:
+    """Append a relay bridge wired to the blueprint's channel producers."""
+    # An external or explicitly composed blueprint may already own a customized
+    # relay bridge (possibly a generated subclass with custom channel ports).
+    # Preserve that atom rather than overriding its kwargs.
+    if any(
+        isinstance(atom.module, type) and issubclass(atom.module, RelayBridgeModule)
+        for atom in blueprint.blueprints
+    ):
+        return blueprint
+
+    producer_keys: set[tuple[str, type]] = set()
+    consumer_keys: set[tuple[str, type]] = set()
+    for atom in blueprint.active_blueprints:
+        for stream in atom.streams:
+            effective_name = blueprint.remapping_map.get((atom.name, stream.name), stream.name)
+            if not isinstance(effective_name, str):
+                continue
+            keys = producer_keys if stream.direction == "out" else consumer_keys
+            keys.add((effective_name, stream.type))
+
+    bridge_atom = RelayBridgeModule.blueprint().blueprints[0]
+    bridge_input_types = {
+        stream.name: stream.type for stream in bridge_atom.streams if stream.direction == "in"
+    }
+    # Every declared Out gets a transport whether or not a counterparty
+    # exists, so tx availability is derived from the blueprint's consumers
+    # (mirroring the producer scan above), not from bound transports.
+    bridge_output_types = {
+        stream.name: stream.type for stream in bridge_atom.streams if stream.direction == "out"
+    }
+    available_channels = tuple(
+        channel.ch
+        for channel in BUILTIN_CHANNELS
+        if (channel_type := bridge_input_types.get(channel.ch)) is not None
+        and (channel.ch, channel_type) in producer_keys
+    ) + tuple(
+        ch
+        for ch, _, _ in TX_CHANNELS
+        if (tx_type := bridge_output_types.get(ch)) is not None and (ch, tx_type) in consumer_keys
+    )
+    return autoconnect(
+        blueprint,
+        RelayBridgeModule.blueprint(available_channels=available_channels),
+    )

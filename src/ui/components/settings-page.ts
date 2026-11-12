@@ -8,6 +8,7 @@ import { AudioPlayer, type AudioPlayerCallbacks } from './audio-player';
 const volumePercent = (v: number): string => `${v * 10}%`;
 
 export interface SettingsState {
+  driveSpeedPercent?: number;
   radarOn: boolean;
   lidarOn: boolean;
   volume: number;
@@ -25,6 +26,7 @@ export interface SettingsState {
 }
 
 export interface SettingsCallbacks {
+  onDriveSpeedSet?: (percent: number) => void;
   onRadarToggle: (enabled: boolean) => void;
   onLidarToggle: (enabled: boolean) => void;
   onLampSet: (level: number) => void;
@@ -69,6 +71,8 @@ export class SettingsPage {
   private state: SettingsState;
   private callbacks: SettingsCallbacks;
 
+  private speedSliderEl: HTMLInputElement | null = null;
+  private speedValueEl: HTMLSpanElement | null = null;
   private radarToggleEl: HTMLInputElement | null = null;
   private lidarToggleEl: HTMLInputElement | null = null;
   private waistToggleEl: HTMLInputElement | null = null;
@@ -124,6 +128,18 @@ export class SettingsPage {
     const isG1 = isG1Family(callbacks.family ?? 'Go2');
     // isG1 covers the humanoid family (G1 + R1); the waist motor is G1-only.
     const isActualG1 = (callbacks.family ?? 'Go2') === 'G1';
+
+    if (!isG1 && callbacks.onDriveSpeedSet) {
+      const driving = this.buildCategory('Driving');
+      driving.appendChild(this.buildSliderSection(
+        'Drive speed', 'Walking and turning response. 100% is normal; tricks are unchanged.',
+        this.state.driveSpeedPercent ?? 100,
+        value => { this.state.driveSpeedPercent = value; callbacks.onDriveSpeedSet!(value); },
+        (slider, value) => { this.speedSliderEl = slider; this.speedValueEl = value; },
+        value => `${value}%`, { min: 10, max: 100, step: 5 },
+      ));
+      this.appendIfPopulated(content, driving);
+    }
 
     // ── Multimedia ── speaker + lamp (audio + lighting output).
     const multimedia = this.buildCategory('Multimedia');
@@ -279,6 +295,11 @@ export class SettingsPage {
    *   - rm_con 1001 → internetRemoteOn
    */
   setState(partial: Partial<SettingsState>): void {
+    if (partial.driveSpeedPercent !== undefined) {
+      this.state.driveSpeedPercent = partial.driveSpeedPercent;
+      if (this.speedSliderEl) this.speedSliderEl.value = String(partial.driveSpeedPercent);
+      if (this.speedValueEl) this.speedValueEl.textContent = `${partial.driveSpeedPercent}%`;
+    }
     if (partial.radarOn !== undefined) {
       this.state.radarOn = partial.radarOn;
       if (this.radarToggleEl) this.radarToggleEl.checked = partial.radarOn;
@@ -373,6 +394,7 @@ export class SettingsPage {
     onChange: (val: number) => void,
     register: (slider: HTMLInputElement, value: HTMLSpanElement) => void,
     formatValue: (v: number) => string = String,
+    bounds = { min: 0, max: 10, step: 1 },
   ): HTMLElement {
     const section = document.createElement('div');
     section.className = 'settings-section settings-section-slider';
@@ -401,8 +423,10 @@ export class SettingsPage {
     const range = document.createElement('input');
     range.type = 'range';
     range.className = 'settings-slider';
-    range.min = '0';
-    range.max = '10';
+    range.setAttribute('aria-label', title);
+    range.min = String(bounds.min);
+    range.max = String(bounds.max);
+    range.step = String(bounds.step);
     range.value = String(initial);
     range.addEventListener('input', () => {
       const val = parseInt(range.value, 10);

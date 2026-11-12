@@ -2,12 +2,16 @@ import { exportFile } from '../../mobile/files';
 import { SlamScene, type ClickMode } from '../scene/slam-scene';
 import { RTC_TOPIC } from '../../protocol/topics';
 import SlamWorker from '../../workers/slam-worker?worker';
-import { putBundle, getBundle, deleteBundle, bytesToBase64, base64ToBytes, bundleToZip, zipToBundle, downloadBlob, type MapBundle } from '../../storage/map-pcd-store';
+import { putBundle, patchBundle, getBundle, deleteBundle, bytesToBase64, base64ToBytes, bundleToZip, zipToBundle, downloadBlob, type MapBundle } from '../../storage/map-pcd-store';
 import { theme } from '../theme';
 import { log, pipeWorkerLogs } from '../logger';
 import type { BluetoothStatus } from './bt-status-icon';
 import { PipCamera } from './pip-camera';
+import { MappingDrive, type MappingDriveState } from './mapping-drive';
+import { MappingLiveView } from './mapping-live-view';
+import { MappingExplorer, MappingStartStability, type ExplorePose, type ExploreTelemetry, type ExploreResult } from '../mapping-explorer';
 import { makeCopyButton } from './copy-button';
+import { MapAnchorController, readAnchorPose, type AnchorPose } from '../map-anchor';
 
 const BT_SVG = (color: string): string =>
   `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7l10 10-5 5V2l5 5L7 17"/></svg>`;
@@ -123,6 +127,38 @@ const LOC_USLAM_TOPICS = [
 ];
 
 export class MappingPage {
+  private anchorController: MapAnchorController;
+  private anchorStatus: HTMLElement | null = null;
+  private anchorPose: AnchorPose | null = null;
+  private lastLocalizationStamp = -Infinity;
+  private mappingStartPose: AnchorPose | null = null;
+  private latestMappingPose: AnchorPose | null = null;
+  private mappingConfirmed = false;
+  private startingMap = false;
+  private mapLoading = false;
+  private mapTransfer = false;
+  private disposed = false;
+  private mappingDrive: MappingDrive | null = null;
+  private workflowStatus: HTMLElement | null = null;
+  private robotId: string;
+  private explorer: MappingExplorer | null = null;
+  private exploreTimer: ReturnType<typeof setInterval> | undefined;
+  private exploreRequested = false;
+  private exploreStopSent = false;
+  private exploreGeneration = 0;
+  private exploreStability = new MappingStartStability();
+  private exploreRequestedAt = 0;
+  private exploreFinishing = false;
+  private exploreSaveTimer: ReturnType<typeof setTimeout> | undefined;
+  private exploreAutoSaveName = '';
+  private explorePose: ExplorePose | null = null;
+  private exploreTelemetry: ExploreTelemetry | null = null;
+  private exploreBattery = NaN;
+  private exploreBatteryAt = -Infinity;
+  private lastMappingStamp = -Infinity;
+  private exploreStatus: HTMLElement | null = null;
+  private exploreStartCheck: HTMLInputElement | null = null;
+  private exploreAreaConfirmed = false;
   private container: HTMLElement;
   private slamScene: SlamScene | null = null;
   private onBack: () => void;
@@ -130,6 +166,9 @@ export class MappingPage {
   private subscribe: (topic: string) => void;
   private unsubscribe: (topic: string) => void;
 
+  private liveLidarData: unknown = null;
+  private liveLidarAt = -Infinity;
+  private nearbyView: MappingLiveView | null = null;
   private state: SlamState = 'idle';
   private stateEl!: HTMLElement;
   private subStateEl!: HTMLElement;
@@ -159,6 +198,8 @@ export class MappingPage {
   // Flow gating state
   private mapLoaded = false;
   private localized = false;
+  private localizationPoseConfirmed = false;
+  private locConfirmBtn!: HTMLButtonElement;
   private localizingInProgress = false;
   private navigationActive = false;
   private autoChargeOnReach = false;
@@ -223,13 +264,78 @@ export class MappingPage {
     onUnsubscribe: (topic: string) => void,
     onRequestFile?: (path: string, cb: (data: string | null) => void) => void,
     onPushFile?: (path: string, b64: string, onProgress?: (frac: number) => void) => Promise<void>,
+    robotId = '',
+    onManualDrive?: (state: MappingDriveState) => void,
+    onExploreMove?: (forward: number, yawRate: number) => boolean,
   ) {
+    this.robotId = robotId;
+    if (onExploreMove) {
+      this.explorer = new MappingExplorer({
+        context: () => ({ mapping: this.mappingConfirmed && this.state === 'mapping', session: this.pendingNewMapId,
+          pose: this.explorePose, telemetry: this.exploreTelemetry }),
+        move: onExploreMove,
+        status: text => this.setExploreStatus(text),
+        finish: result => this.finishExplore(result),
+        verifiedStartingArea: () => this.exploreAreaConfirmed,
+      });
+      this.exploreTimer = setInterval(() => {
+        if (this.exploreRequested && this.mappingStartPose && this.explorePose && !this.startingMap) {
+          try {
+            if (!this.exploreStopSent) {
+              if (!onExploreMove!(0, 0)) throw new Error('Initial stop transport unavailable.');
+              this.exploreStopSent = true;
+              this.exploreStability.reset();
+            }
+            const ready = this.exploreStability.ready({ mapping: this.mappingConfirmed && this.state === 'mapping',
+              session: this.pendingNewMapId, pose: this.explorePose, telemetry: this.exploreTelemetry }, performance.now());
+            if (ready) { this.explorer!.start(true); this.exploreRequested = false; }
+            else if (performance.now() - this.exploreRequestedAt > 15_000) {
+              this.exploreRequested = false;
+              this.setExploreStatus('Go2 did not provide a steady standing pose and low motion readings. Mapping remains stationary; use Stop & Save.');
+            }
+          }
+          catch (error) {
+            if (performance.now() - this.exploreRequestedAt > 15_000) {
+              this.exploreRequested = false;
+              this.setExploreStatus(`${error instanceof Error ? error.message : 'Missing exploration data.'} Mapping remains stationary; use Stop & Save.`);
+            }
+          }
+        } else if (this.exploreRequested && performance.now() - this.exploreRequestedAt > 30_000 && !this.startingMap) {
+          this.exploreRequested = false;
+          this.setExploreStatus('Exploration did not receive a mapping pose in time. Use Stop & Save.');
+        }
+        this.explorer?.tick();
+      }, 50);
+    }
     this.onBack = onBack;
     this.publish = onPublish;
     this.subscribe = onSubscribe;
     this.unsubscribe = onUnsubscribe;
     this.requestFile = onRequestFile ?? null;
     this.pushFile = onPushFile ?? null;
+    this.anchorController = new MapAnchorController({
+      storage: localStorage,
+      context: () => ({ robotId, mapId: this.currentMapId || this.robotSlotMapId,
+        localized: this.mapLoaded && this.localized && this.localizationPoseConfirmed, mapping: this.state === 'mapping',
+        patrolling: this.state === 'patrolling', pose: this.anchorPose }),
+      mapId: () => this.queryCurrentMapId(),
+      localizationStatus: () => this.queryLocalizationStatus(),
+      navigationStatus: () => this.queryNavigationStatus(),
+      idle: async () => (await Promise.all([this.queryMappingStatus(), this.queryPatrolStatus(), this.queryAutoChargeStatus()])).every(status => status === '0'),
+      send: cmd => {
+        this.sendCmd(cmd);
+        if (cmd === 'navigation/start' || cmd === 'navigation/stop') {
+          this.navigationActive = cmd === 'navigation/start';
+          this.setState(this.navigationActive ? 'navigating' : this.localized ? 'localized' : 'idle');
+          this.updateNavControls();
+        }
+      },
+      status: message => {
+        if (this.anchorStatus) this.anchorStatus.textContent = message;
+        this.slamScene?.setAnchorMarker(this.anchorController.anchor());
+        this.addLog(message);
+      },
+    });
 
     this.container = document.createElement('div');
     this.container.className = 'mapping-page';
@@ -310,7 +416,7 @@ export class MappingPage {
     const leftSidebar = document.createElement('div');
     leftSidebar.className = 'mapping-sidebar mapping-sidebar-left';
     this.buildLeftSidebar(leftSidebar);
-    body.appendChild(leftSidebar);
+    // Diagnostics are inside the instruction drawer, not over the map.
 
     // 3D Viewport
     const viewport = document.createElement('div');
@@ -318,17 +424,75 @@ export class MappingPage {
     const canvas = document.createElement('canvas');
     canvas.className = 'mapping-canvas';
     viewport.appendChild(canvas);
+    const legend = document.createElement('div');
+    legend.className = 'mapping-trace-legend';
+    legend.textContent = 'Solid red: estimated position history. Red dots: planned route. History resets when localization starts.';
+    viewport.appendChild(legend);
     body.appendChild(viewport);
 
     // Draggable PiP video feed overlaid on the 3D viewport — same component
     // and styling as the control screen.
     this.pipCamera = new PipCamera(viewport);
+    this.nearbyView = new MappingLiveView(viewport);
 
     // Right sidebar — controls
     const sidebar = document.createElement('div');
     sidebar.className = 'mapping-sidebar mapping-sidebar-right';
     this.buildSidebar(sidebar);
+    if (onManualDrive) {
+      const driveSection = this.buildSection('Manual Drive', body => {
+        const hint = document.createElement('div');
+        hint.className = 'mapping-hint';
+        hint.textContent = 'Hold to move slowly; release to stop. Keep Go2 in sight. Each hold is limited to 10 seconds.';
+        body.appendChild(hint);
+        this.mappingDrive = new MappingDrive(
+          () => this.canManuallyDrive(), onManualDrive,
+          () => {
+            this.cancelExplore('Manual drive took over. Mapping remains active.');
+            this.anchorController.stop();
+            if (this.navigationActive) this.sendCmd('navigation/stop');
+            this.navigationActive = false;
+            this.autoChargeOnReach = false;
+            if (this.state !== 'mapping' && this.localized) this.setState('localized');
+            this.updateNavControls();
+          }, text => this.setWorkflowStatus(text),
+        );
+        body.appendChild(this.mappingDrive.element);
+      });
+      sidebar.prepend(driveSection);
+    }
+
+    sidebar.id = 'mapping-directions';
+    sidebar.setAttribute('aria-label', 'Mapping directions and controls');
+    sidebar.inert = true;
+    sidebar.prepend(this.stateEl, this.subStateEl);
+    const diagnostics = document.createElement('details');
+    const summary = document.createElement('summary');
+    summary.textContent = 'Diagnostics';
+    diagnostics.append(summary, leftSidebar);
+    sidebar.appendChild(diagnostics);
     body.appendChild(sidebar);
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'mapping-drawer-toggle';
+    toggle.textContent = '‹';
+    toggle.setAttribute('aria-label', 'Open mapping directions');
+    toggle.setAttribute('aria-controls', sidebar.id);
+    toggle.setAttribute('aria-expanded', 'false');
+    const setDrawer = (open: boolean) => {
+      this.mappingDrive?.stop();
+      this.nearbyView?.setSuspended(open);
+      this.container.classList.toggle('mapping-drawer-open', open);
+      sidebar.inert = !open;
+      toggle.textContent = open ? '›' : '‹';
+      toggle.setAttribute('aria-expanded', String(open));
+      toggle.setAttribute('aria-label', open ? 'Close mapping directions' : 'Open mapping directions');
+    };
+    toggle.addEventListener('click', () => setDrawer(!this.container.classList.contains('mapping-drawer-open')));
+    sidebar.addEventListener('keydown', event => {
+      if (event.key === 'Escape') { setDrawer(false); toggle.focus(); }
+    });
+    body.appendChild(toggle);
 
     this.container.appendChild(body);
     parent.appendChild(this.container);
@@ -336,6 +500,7 @@ export class MappingPage {
     // Init scene after DOM is attached
     requestAnimationFrame(() => {
       this.slamScene = new SlamScene(canvas);
+      this.setLiveLidar(this.liveLidarData, this.liveLidarAt);
       this.slamScene.onPoseSet = (mode, x, y, yaw) => this.handlePoseSet(mode, x, y, yaw);
     });
 
@@ -353,12 +518,14 @@ export class MappingPage {
         this.workerReady = true;
         log.ui.info('[slam] Worker ready');
       } else if (msg.type === 'newMap') {
+        if (msg.sessionId !== this.pendingNewMapId) return;
         const { output, directOutput } = msg.data as {
           output: Float32Array;
           directOutput: Float32Array;
         };
         this.slamScene?.updatePointCloud(output);
         this.slamScene?.updateLaserCloud(directOutput);
+        if (msg.frame === 'odom') this.explorer?.cloud(directOutput, msg.capturedAt, msg.sessionId);
       } else if (msg.type === 'preview') {
         const { points } = msg.data as { points: Float32Array };
         this.slamScene?.updateLaserCloud(points);
@@ -382,6 +549,135 @@ export class MappingPage {
     setTimeout(() => { void this.preloadRobotState(); }, 500);
   }
 
+  private setWorkflowStatus(message: string): void {
+    if (this.workflowStatus) this.workflowStatus.textContent = message;
+    this.addLog(message);
+  }
+
+  private canManuallyDrive(): boolean {
+    if (this.disposed || this.exploreFinishing || this.startingMap || this.mapLoading || this.state === 'patrolling') return false;
+    const pose = this.state === 'mapping' && this.mappingStartPose && this.mappingConfirmed
+      ? this.latestMappingPose : this.localized ? this.anchorPose : null;
+    return !!pose && performance.now() - pose.at < 1500;
+  }
+
+  private async startMapAtAnchor(isCancelled: () => boolean = () => false): Promise<void> {
+    if (this.startingMap || this.mapLoading || this.mapTransfer || this.state === 'mapping' || !this.robotId) return;
+    this.startingMap = true;
+    this.mappingDrive?.stop();
+    this.anchorController.stop();
+    try {
+      const statuses = await Promise.all([this.queryMappingStatus(), this.queryNavigationStatus(),
+        this.queryPatrolStatus(), this.queryAutoChargeStatus()]);
+      if (this.disposed || isCancelled()) return;
+      if (!statuses.every(s => s === '0')) throw new Error('Stop mapping, navigation, patrol and auto-charge before starting a new map.');
+      this.setWorkflowStatus('Backing up the current map before creating a new map...');
+      const oldId = await this.queryCurrentMapId();
+      if (!oldId || !this.requestFile) throw new Error('Cannot confirm and back up the robot map. New mapping was not started.');
+      const pcd = await this.fetchRobotFile('map.pcd');
+      if (this.disposed || isCancelled()) return;
+      const pgm = await this.fetchRobotFile('map.pgm');
+      if (this.disposed || isCancelled()) return;
+      const txt = await this.fetchRobotFile('map.txt');
+      if (this.disposed || isCancelled()) return;
+      if (!pcd?.byteLength || !pgm?.byteLength || !txt?.byteLength) {
+        throw new Error('Complete map backup failed. New mapping was not started.');
+      }
+      const backupId = MappingPage.generateMapId();
+      const oldAnchor = this.anchorController.anchor(oldId);
+      const anchor = oldAnchor ? { ...oldAnchor, mapId: backupId } : undefined;
+      await putBundle(backupId, { pcd, pgm, txt, anchor });
+      if (anchor) this.anchorController.restore(anchor);
+      const maps = this.getSavedMaps();
+      maps.push({ id: backupId, name: `Backup before mapping ${new Date().toLocaleString()}`, date: new Date().toISOString() });
+      this.saveMapsToStorage(maps);
+      this.renderSavedMaps();
+      if (this.disposed || isCancelled()) return;
+      if (this.localized || this.localizingInProgress) {
+        this.sendCmd('localization/stop');
+        if (await this.queryLocalizationStatus() !== '0') throw new Error('Localization did not stop; new mapping was not started.');
+      }
+      if (this.disposed || isCancelled()) return;
+      this.slamScene?.clearAll();
+      this.slamWorker?.postMessage('clear');
+      this.currentMapId = ''; this.robotSlotMapId = '';
+      this.anchorPose = null; this.mappingStartPose = null; this.latestMappingPose = null;
+      this.localized = false; this.mapLoaded = false; this.localizingInProgress = false;
+      this.mappingConfirmed = false;
+      this.explorePose = null; this.lastMappingStamp = -Infinity;
+      this.pendingNewMapId = MappingPage.generateMapId();
+      this.pendingSaveAfterStop = false;
+      if (this.pendingSaveTimer !== null) { clearTimeout(this.pendingSaveTimer); this.pendingSaveTimer = null; }
+      this.updateFlowGating();
+      this.setWorkflowStatus('Starting mapping; Go2 may stand up. Keep it at A until the first live mapping position arrives.');
+      this.sendCmd('mapping/start');
+      this.setState('mapping');
+    } catch (error) {
+      this.setWorkflowStatus(error instanceof Error ? error.message : 'Could not start mapping.');
+    } finally { this.startingMap = false; }
+  }
+
+  private setExploreStatus(text: string): void {
+    if (this.exploreStatus) this.exploreStatus.textContent = text;
+    this.addLog(text);
+  }
+
+  private async startExplore(): Promise<void> {
+    if (!this.explorer || this.explorer.active || this.exploreRequested || this.exploreFinishing) return;
+    if (this.state === 'mapping' || this.startingMap || this.mapLoading || this.mapTransfer) {
+      this.setExploreStatus('Stop and save the current mapping session before starting Explore & Map.'); return;
+    }
+    this.exploreAreaConfirmed = this.exploreStartCheck?.checked === true;
+    if (this.exploreStartCheck) this.exploreStartCheck.checked = false;
+    this.mappingDrive?.stop();
+    const generation = ++this.exploreGeneration;
+    this.exploreStability.reset();
+    this.exploreStopSent = false;
+    this.exploreRequested = true;
+    this.exploreRequestedAt = performance.now();
+    await this.startMapAtAnchor(() => generation !== this.exploreGeneration);
+    if (generation !== this.exploreGeneration || this.disposed || !this.pendingNewMapId) {
+      this.exploreRequested = false;
+      if (!this.disposed) this.setWorkflowStatus('Exploration startup cancelled or mapping was not started.');
+      return;
+    }
+    this.exploreRequestedAt = performance.now();
+    this.setExploreStatus('Waiting for Go2 to stay still for 2 seconds, then scan. Keep it at A.');
+  }
+
+  private cancelExplore(reason: string, preserveSave = false): void {
+    const wasRequested = this.exploreRequested;
+    ++this.exploreGeneration;
+    this.exploreStability.reset();
+    this.exploreRequested = false;
+    if (!preserveSave) this.exploreAutoSaveName = '';
+    clearTimeout(this.exploreSaveTimer);
+    this.exploreSaveTimer = undefined;
+    this.exploreFinishing = false;
+    this.explorer?.stop(reason, false);
+    if (wasRequested) this.setExploreStatus(reason);
+  }
+
+  private finishExplore(result: ExploreResult): void {
+    this.exploreRequested = false;
+    this.setExploreStatus(`${result.reason} Travel: ${result.distance.toFixed(2)} m.`);
+    if (!result.save || this.disposed || !this.pendingNewMapId || !this.mappingConfirmed) return;
+    this.exploreFinishing = true;
+    this.exploreAutoSaveName = `Explore - partial map ${new Date().toLocaleString()}`;
+    // Zero velocity/StopMove was sent by the controller before this callback.
+    // Keep mapping briefly while the robot settles, then save in place.
+    this.exploreSaveTimer = setTimeout(() => {
+      this.exploreSaveTimer = undefined;
+      if (this.disposed || !this.exploreFinishing) return;
+      this.sendCmd('mapping/stop');
+      this.setState('idle');
+    }, 500);
+  }
+
+  setExplorationMotion(data: { bodyHeight: number; speed: number; roll: number; pitch: number }): void {
+    this.exploreTelemetry = { ...data, at: performance.now(), battery: this.exploreBattery, batteryAt: this.exploreBatteryAt };
+  }
+
   private buildSidebar(sidebar: HTMLElement): void {
     // Status is rendered as a horizontal stepper under the header — see ctor.
 
@@ -395,24 +691,51 @@ export class MappingPage {
 
       const row = document.createElement('div');
       row.className = 'mapping-btn-row';
-      row.appendChild(this.btn('New Map', 'mapping-btn-start', () => {
-        this.slamScene?.clearAll();
-        this.slamWorker?.postMessage('clear');
-        this.currentMapId = '';
-        this.pendingNewMapId = MappingPage.generateMapId();
-        this.pendingSaveAfterStop = false;
-        // mapping/start overwrites the robot's slot — invalidate the marker.
-        this.robotSlotMapId = '';
-        if (this.pendingSaveTimer !== null) { clearTimeout(this.pendingSaveTimer); this.pendingSaveTimer = null; }
-        this.addLog(`New map ID minted: ${this.pendingNewMapId}`);
-        this.sendCmd('mapping/start');
-        this.setState('mapping');
+      row.appendChild(this.btn('New Map + Anchor A', 'mapping-btn-start', () => {
+        if (this.exploreStartCheck) this.exploreStartCheck.checked = false;
+        void this.startMapAtAnchor();
       }));
       row.appendChild(this.btn('Stop & Save', 'mapping-btn-stop', () => {
+        this.cancelExplore('Exploration stopped; saving the map.');
+        this.mappingDrive?.stop();
         this.sendCmd('mapping/stop');
         this.setState('idle');
       }));
       body.appendChild(row);
+      this.workflowStatus = document.createElement('div');
+      this.workflowStatus.className = 'mapping-hint';
+      this.workflowStatus.setAttribute('role', 'status');
+      this.workflowStatus.textContent = 'Place Go2 at A. New Map backs up the current map, then captures A before you drive. Startup may stand Go2 up.';
+      body.appendChild(this.workflowStatus);
+      const exploreControls = document.createElement('div');
+      exploreControls.className = 'mapping-explore-controls';
+      const startCheckLabel = document.createElement('label');
+      startCheckLabel.className = 'mapping-start-check';
+      this.exploreStartCheck = document.createElement('input');
+      this.exploreStartCheck.type = 'checkbox';
+      const startCheckText = document.createElement('span');
+      startCheckText.textContent = 'Starting floor is flat with no steps or holes; nearby objects stay blocked (this trial only)';
+      startCheckLabel.append(this.exploreStartCheck, startCheckText);
+      exploreControls.appendChild(startCheckLabel);
+      const exploreStart = this.btn('Explore & Map (experimental)', 'mapping-btn-start', () => { void this.startExplore(); });
+      exploreStart.disabled = !this.explorer;
+      exploreControls.appendChild(exploreStart);
+      exploreControls.appendChild(this.btn('Stop Explore & Save', 'mapping-btn-stop', () => {
+        if (this.explorer?.active) {
+          this.explorer.stop('Stopped by user. Map may be incomplete.', true);
+        } else {
+          this.cancelExplore('Exploration cancelled before motion.');
+          if (this.mappingConfirmed && this.pendingNewMapId) {
+            this.finishExplore({ reason: 'Stopped by user before exploration. Map may be incomplete.', save: true, distance: 0, cells: 0 });
+          }
+        }
+      }));
+      body.appendChild(exploreControls);
+      this.exploreStatus = document.createElement('div');
+      this.exploreStatus.className = 'mapping-hint';
+      this.exploreStatus.setAttribute('role', 'status');
+      this.exploreStatus.textContent = 'Step 1 only: walks automatically on checked floor. The starting-floor check supplies terrain evidence in the body blind spot; each forward step and turn checks the actual body footprint. Supervise initial trials on a flat floor. Limits: 10 minutes, 30 m travel, 10% battery reserve. Stops and saves in place; no automatic return.';
+      body.appendChild(this.exploreStatus);
 
       // ── Saved Maps ──
       const savedHeader = document.createElement('div');
@@ -456,6 +779,7 @@ export class MappingPage {
 
       // Start Localization (green) — tries auto-localization first
       this.locStartBtn = this.btn('Start Localization', 'mapping-btn-start', () => {
+        if (this.startingMap || this.mapLoading || this.state === 'mapping') return;
         this.localizingInProgress = true;
         this.locStartBtn.style.display = 'none';
         this.locAbortBtn.style.display = '';
@@ -468,6 +792,17 @@ export class MappingPage {
       // Set Initial Pose — subtle by default, highlighted after auto-localization fails
       this.locSetPoseBtn = this.clickModeBtn('Set Initial Pose (hold on map, drag to aim)', 'initial_pose');
       body.appendChild(this.locSetPoseBtn);
+      this.locConfirmBtn = this.btn('Position on map is correct', 'mapping-btn-start', () => {
+        if (!this.localized || !this.anchorPose || performance.now() - this.anchorPose.at > 1500) {
+          this.setLocStatus('Wait for a live localized position before confirming.', '#b46b00'); return;
+        }
+        this.localizationPoseConfirmed = true;
+        this.locConfirmBtn.style.display = 'none';
+        this.setLocStatus('Position confirmed on map', '#42CF55');
+        this.updateFlowGating();
+      });
+      this.locConfirmBtn.style.display = 'none';
+      body.appendChild(this.locConfirmBtn);
 
       // Abort / Stop (red)
       this.locAbortBtn = this.btn('Abort Localization', 'mapping-btn-stop', () => {
@@ -492,10 +827,35 @@ export class MappingPage {
       this.navHint.textContent = 'Localize the robot first';
       body.appendChild(this.navHint);
 
+      const anchorRow = document.createElement('div');
+      anchorRow.className = 'mapping-btn-row';
+      const anchorOperation = async (operation: () => Promise<void>) => {
+        try { await operation(); }
+        catch (error) { if (this.anchorStatus) this.anchorStatus.textContent = error instanceof Error ? error.message : 'Anchor operation failed.'; }
+      };
+      anchorRow.appendChild(this.btn('Set Anchor Here', 'mapping-btn', () => { void anchorOperation(async () => {
+        await this.anchorController.set();
+        const mapId = this.currentMapId || this.robotSlotMapId;
+        if (await getBundle(mapId)) await patchBundle(mapId, { anchor: this.anchorController.anchor() ?? undefined });
+      }); }));
+      anchorRow.appendChild(this.btn('Return to Anchor', 'mapping-btn-start', () => {
+        this.autoChargeOnReach = false;
+        void anchorOperation(() => this.anchorController.returnToAnchor());
+      }));
+      body.appendChild(anchorRow);
+      body.appendChild(this.btn('Stop Return', 'mapping-btn-stop', () => this.anchorController.stop()));
+      this.anchorStatus = document.createElement('div');
+      this.anchorStatus.className = 'mapping-hint';
+      this.anchorStatus.setAttribute('role', 'status');
+      this.anchorStatus.textContent = 'Starting point A is saved with a new map. Localize Go2 before returning.';
+      body.appendChild(this.anchorStatus);
+
       // Start/Stop Navigation toggle
       const navToggleRow = document.createElement('div');
       navToggleRow.className = 'mapping-btn-row';
       this.navStartBtn = this.btn('Start Navigation', 'mapping-btn-start', () => {
+        if (!this.localizationPoseConfirmed) return;
+        this.anchorController.stop();
         this.sendCmd('navigation/start');
         this.navigationActive = true;
         this.setState('navigating');
@@ -504,6 +864,7 @@ export class MappingPage {
       });
       navToggleRow.appendChild(this.navStartBtn);
       this.navStopBtn = this.btn('Stop Navigation', 'mapping-btn-stop', () => {
+        this.anchorController.stop();
         this.sendCmd('navigation/stop');
         this.slamScene?.clearNavPath();
         this.slamScene?.clearGoalMarker();
@@ -973,12 +1334,31 @@ export class MappingPage {
   // ── Commands ──
 
   private sendCmd(cmd: string): void {
+    if (this.disposed) return;
+    if (/^(localization\/(start|stop|set_initial_pose)|navigation\/(start|set_goal_pose)|patrol\/(start|go)|common\/set_map_id\/)/.test(cmd)) {
+      if (this.explorer?.active || (this.exploreRequested && !this.startingMap)) this.cancelExplore('Exploration cancelled by another map operation.');
+    }
+    if (/^(mapping\/start|common\/set_map_id\/|localization\/(start|stop|set_initial_pose))/.test(cmd)) {
+      this.localizationPoseConfirmed = false;
+      this.anchorController.stop();
+      this.resetOdomTracking();
+    }
+    if (/^(mapping\/start|common\/set_map_id\/|localization\/(stop|set_initial_pose)|patrol\/start)/.test(cmd)) {
+      this.anchorController.stop();
+      this.mappingDrive?.stop();
+      this.anchorPose = null;
+      this.lastLocalizationStamp = -Infinity;
+    }
     log.ui.info(`[slam] Sending: ${cmd}`);
     this.publish(RTC_TOPIC.USLAM_CMD, cmd);
   }
 
   /** Unified handler for all click+drag pose sets (initial_pose, goal, patrol) */
   private handlePoseSet(mode: ClickMode, x: number, y: number, yaw: number): void {
+    if ((mode === 'goal' || mode === 'patrol') && !this.localizationPoseConfirmed) {
+      this.setLocStatus('Confirm the localized position before setting a navigation goal.', '#b46b00'); return;
+    }
+    if (mode === 'goal' || mode === 'patrol') this.anchorController.stop();
     const yawDeg = (yaw * 180 / Math.PI).toFixed(1);
 
     switch (mode) {
@@ -1033,6 +1413,7 @@ export class MappingPage {
   // ── Patrol Execution (matches APK flow) ──
 
   private async executePatrol(): Promise<void> {
+    if (!this.localizationPoseConfirmed) return;
     const n = this.patrolPoints.length;
     if (n < 2) {
       const msg = `Need at least 2 waypoints to start patrol (have ${n})`;
@@ -1091,6 +1472,7 @@ export class MappingPage {
   // [-0.15, 0]. On REACHED, our handler fires autocharge/start. On
   // autocharge/state_transition/FAILURE we retry up to 5 times.
   private async startAutoCharge(): Promise<void> {
+    this.cancelAnchorReturn();
     this.autoChargeRetries = 0;
     this.autoChargeOnReach = true;
     if (!this.navigationActive) {
@@ -1105,6 +1487,7 @@ export class MappingPage {
   }
 
   private cancelAutoCharge(): void {
+    this.cancelAnchorReturn();
     this.autoChargeOnReach = false;
     this.autoChargeRetries = 0;
     // Mirrors APK's `_A`: stop nav and the autocharge module both.
@@ -1127,14 +1510,19 @@ export class MappingPage {
     this.locHint.style.display = canLocalize ? 'none' : '';
 
     // Navigation & Patrol: requires localized
-    const canNavigate = this.mapLoaded && this.localized;
-    this.navSection.classList.toggle('mapping-section-disabled', !canNavigate);
+    const canNavigate = this.mapLoaded && this.localized && this.localizationPoseConfirmed;
+    this.navSection.classList.toggle('mapping-section-disabled', !this.mapLoaded || !this.localized);
+    for (const button of this.navSection.querySelectorAll<HTMLButtonElement>('button')) {
+      button.disabled = !canNavigate && !button.classList.contains('mapping-btn-stop');
+    }
     this.navHint.style.display = canNavigate ? 'none' : '';
+    this.navHint.textContent = this.localized ? 'Check the robot marker and live scan against the room, then confirm its position in Step 2.' : 'Localize the robot first';
+    this.locConfirmBtn.style.display = this.localized && !this.localizationPoseConfirmed ? '' : 'none';
     // Autocharge piggybacks on the same navigation requirements.
     this.autochargeSection?.classList.toggle('mapping-section-disabled', !canNavigate);
 
     // Reset nav controls when losing localization
-    if (!canNavigate) {
+    if (!this.mapLoaded || !this.localized) {
       this.navigationActive = false;
       this.updateNavControls();
     }
@@ -1204,6 +1592,8 @@ export class MappingPage {
 
   /** Push battery percent to the header widget (called from app.ts on LOW_STATE). */
   setBattery(percent: number): void {
+    this.exploreBattery = percent;
+    this.exploreBatteryAt = performance.now();
     if (!this.batteryFill || !this.batteryText) return;
     const p = Math.max(0, Math.min(100, Math.round(percent)));
     this.batteryText.textContent = `${p}%`;
@@ -1309,7 +1699,19 @@ export class MappingPage {
     'STAND_DOWN': 'Crouching down...',
   };
 
+  /** Display the same local voxel feed as Drive, only outside a saved/SLAM map. */
+  setLiveLidar(data: unknown, at = performance.now()): void {
+    this.liveLidarData = data;
+    this.liveLidarAt = at;
+    this.nearbyView?.setData(data, at);
+    if (data && this.state === 'idle' && !this.mapLoaded) this.slamScene?.updateLiveLidar(data);
+    else this.slamScene?.clearLiveLidar();
+  }
+
+  setLiveRobotPose(data: unknown, at = performance.now()): void { this.nearbyView?.setPose(data, at); }
+
   private setState(s: SlamState): void {
+    this.slamScene?.clearLiveLidar();
     this.state = s;
     this.updateStateDisplay();
     // Clear sub-state when changing main state
@@ -1319,6 +1721,7 @@ export class MappingPage {
   }
 
   private updateStateDisplay(): void {
+    this.nearbyView?.setAvailable(this.state !== 'idle' || this.mapLoaded);
     if (!this.stateEl) return;
 
     // Per-step status: 'active' (current), 'done' (already passed),
@@ -1590,7 +1993,8 @@ export class MappingPage {
         this.locStartBtn.style.display = 'none';
         this.locAbortBtn.style.display = '';
         this.locAbortBtn.textContent = 'Stop Localization';
-        this.setLocStatus('Localized', '#42CF55');
+        this.localizationPoseConfirmed = false;
+        this.setLocStatus('Localization active. Check the estimated position and confirm it before navigation.', '#b46b00');
 
         this.updateFlowGating();
 
@@ -1681,11 +2085,46 @@ export class MappingPage {
         this.handleCloudWorld(data);
         break;
       case RTC_TOPIC.USLAM_ODOM:
-        this.handleOdom(data);
+        if (!this.mappingConfirmed || this.state !== 'mapping') break;
+        {
+          const stamp = (data as { header?: { stamp?: { sec: number; nanosec: number } } })?.header?.stamp;
+          if (stamp && Number.isFinite(stamp.sec) && Number.isFinite(stamp.nanosec)) {
+            const time = stamp.sec + stamp.nanosec * 1e-9;
+            if (time <= this.lastMappingStamp) break;
+            this.lastMappingStamp = time;
+          }
+        }
+        this.latestMappingPose = readAnchorPose(data, this.pendingNewMapId, performance.now());
+        const autoHeader = data as { header?: { frame_id?: string; stamp?: { sec: number; nanosec: number } }; child_frame_id?: string };
+        const position = (data as { pose?: { pose?: { position?: { z: number } } } })?.pose?.pose?.position;
+        this.explorePose = this.latestMappingPose && position && Number.isFinite(position.z)
+          && autoHeader.header?.frame_id === 'odom' && autoHeader.child_frame_id === 'base_link'
+          && Number.isFinite(autoHeader.header?.stamp?.sec) && Number.isFinite(autoHeader.header?.stamp?.nanosec)
+          ? { ...this.latestMappingPose, z: position.z, session: this.pendingNewMapId } : null;
+        if (this.mappingConfirmed && this.pendingNewMapId && !this.mappingStartPose && this.latestMappingPose) {
+          this.mappingStartPose = this.latestMappingPose;
+          this.slamScene?.setAnchorMarker(this.mappingStartPose);
+          this.slamScene?.showRobot(true);
+          this.setWorkflowStatus(this.exploreRequested ? 'A captured for automatic mapping. Use Stop Explore & Save to finish.' : 'A captured. Drive slowly around the room, then Stop & Save.');
+        }
+        this.handleOdom(data, 'mapping');
         break;
-      case RTC_TOPIC.USLAM_LOC_ODOM:
-        this.handleOdom(data);
+      case RTC_TOPIC.USLAM_LOC_ODOM: {
+        if (!this.localized || this.state === 'mapping') break;
+        const stamp = (data as { header?: { stamp?: { sec: number; nanosec: number } } })?.header?.stamp;
+        if (stamp && Number.isFinite(stamp.sec) && Number.isFinite(stamp.nanosec)) {
+          const time = stamp.sec + stamp.nanosec * 1e-9;
+          if (time <= this.lastLocalizationStamp) break;
+          this.lastLocalizationStamp = time;
+        }
+        this.anchorPose = readAnchorPose(data, this.currentMapId || this.robotSlotMapId, performance.now());
+        if (!this.localizationPoseConfirmed && this.anchorPose && this.latestMappingPose?.mapId === this.anchorPose.mapId) {
+          const distance = Math.hypot(this.anchorPose.x - this.latestMappingPose.x, this.anchorPose.y - this.latestMappingPose.y);
+          if (distance > 0.5) this.setLocStatus(`Estimated position shifted ${distance.toFixed(2)} m from the last mapping position. If Go2 stayed still, this match may be wrong. Use Set Initial Pose; confirm only after alignment is correct.`, '#b46b00');
+        }
+        this.handleOdom(data, 'localization');
         break;
+      }
       case RTC_TOPIC.USLAM_LOC_CLOUD:
         this.handleLocalizationCloud(data);
         break;
@@ -1702,16 +2141,31 @@ export class MappingPage {
     const msg = typeof data === 'string' ? data : JSON.stringify(data);
     this.addLog(msg);
     log.ui.info('[slam] Server log:', msg);
+    const navState = msg.match(/navigation\/state_transition\/([A-Z_]+)/)?.[1];
+    if (navState) this.anchorController.navigationState(navState);
 
     // ── Map state transitions ──
     if (msg.includes('mapping/stop/success')) {
+      this.cancelExplore('Mapping stopped.', this.exploreFinishing);
+      this.exploreFinishing = false;
+      this.mappingDrive?.stop();
+      this.mappingConfirmed = false;
       this.setState('idle');
       this.mapLoaded = true;
       // Hide live white laser scan once mapping ends (APK behavior)
       this.slamScene?.updateLaserCloud(new Float32Array(0));
       this.updateFlowGating();
     }
-    if (msg.includes('mapping/start/success')) this.setState('mapping');
+    if (msg.includes('mapping/start/success')) {
+      this.mappingConfirmed = true;
+      this.setState('mapping');
+    }
+    if (msg.includes('mapping/start/failed')) {
+      this.mappingConfirmed = false;
+      this.pendingNewMapId = '';
+      this.setState('idle');
+      this.setWorkflowStatus('Mapping failed to start. The previous map backup is retained.');
+    }
 
     // Map loaded via set_map_id
     if (msg.includes('common/set_map_id') && msg.includes('success')) {
@@ -1722,6 +2176,8 @@ export class MappingPage {
 
     // ── Localization state transitions (exact message matching) ──
     if (msg.includes('[Localization] initialization succeed!')) {
+      this.lastLocalizationStamp = -Infinity;
+      this.anchorPose = null;
       this.localizingInProgress = false;
       this.localized = true;
       this.setState('localized');
@@ -1736,8 +2192,10 @@ export class MappingPage {
       this.locStartBtn.style.display = 'none';
       this.locAbortBtn.style.display = '';
       this.locAbortBtn.textContent = 'Stop Localization';
-      this.setLocStatus('Localized', '#42CF55');
-      this.showNotification('Localization successful - robot visible on map', '#42CF55');
+      this.localizationPoseConfirmed = false;
+      this.resetOdomTracking();
+      this.setLocStatus('Position estimated. Check the marker and scan alignment, then confirm. If wrong, use Set Initial Pose.', '#b46b00');
+      this.showNotification('Localization initialized. Position still needs checking on the map.', '#b46b00');
       this.updateFlowGating();
     }
     if (msg.includes('[Localization] initialization failed!')) {
@@ -1894,6 +2352,7 @@ export class MappingPage {
 
     if (msg.includes('localization/stop/success')) {
       this.localized = false;
+      this.localizationPoseConfirmed = false;
       this.localizingInProgress = false;
       this.slamScene?.showRobot(false);
       // Clear real-time white point cloud (keep accumulated map)
@@ -1990,7 +2449,11 @@ export class MappingPage {
     if (msg.includes('common/get_map_id/map_id')) {
       const mapId = msg.slice(msg.lastIndexOf('/') + 1);
       if (mapId && mapId !== 'map_id') {
+        if (this.currentMapId !== mapId) {
+          this.anchorPose = null; this.localizationPoseConfirmed = false;
+        }
         this.currentMapId = mapId;
+        this.slamScene?.setAnchorMarker(this.anchorController.anchor());
         this.mapLoaded = true;
         this.updateFlowGating();
         const input = this.container.querySelector('#map-id-input') as HTMLInputElement;
@@ -2015,6 +2478,7 @@ export class MappingPage {
         this.pendingSaveTimer = null;
         if (this.pendingSaveAfterStop) {
           this.pendingSaveAfterStop = false;
+          this.exploreAutoSaveName = '';
           this.addLog('Save aborted: set_map_id never confirmed (5s timeout)');
           this.showNotification('Failed to save: robot did not confirm map ID', '#FF3D3D');
         }
@@ -2031,6 +2495,11 @@ export class MappingPage {
       this.pendingNewMapId = '';
       // Slot now holds the freshly-mapped data labelled with this id.
       this.robotSlotMapId = this.currentMapId;
+      if (this.mappingStartPose?.mapId === this.currentMapId) {
+        try { this.anchorController.saveMappingStart(this.mappingStartPose); }
+        catch (error) { this.addLog(String(error)); }
+      }
+      this.slamScene?.setAnchorMarker(this.anchorController.anchor());
       const input = this.container.querySelector('#map-id-input') as HTMLInputElement;
       if (input) input.value = this.currentMapId;
       this.saveCurrentMap();
@@ -2038,10 +2507,13 @@ export class MappingPage {
     if (this.pendingSaveAfterStop && msg.includes('common/set_map_id/failed')) {
       this.pendingSaveAfterStop = false;
       if (this.pendingSaveTimer !== null) { clearTimeout(this.pendingSaveTimer); this.pendingSaveTimer = null; }
-      this.addLog(`set_map_id failed for ${this.pendingNewMapId} — saving locally with this ID anyway`);
-      this.currentMapId = this.pendingNewMapId;
+      this.addLog(`set_map_id failed for ${this.pendingNewMapId} — map activation was not confirmed`);
+      this.exploreAutoSaveName = '';
       this.pendingNewMapId = '';
-      this.saveCurrentMap();
+      this.currentMapId = '';
+      this.mapLoaded = false;
+      this.setWorkflowStatus('Map ID was not confirmed. New anchor was not saved; keep the backup and retry.');
+      this.updateFlowGating();
     }
   }
 
@@ -2059,10 +2531,14 @@ export class MappingPage {
 
     if (!buffer || buffer.byteLength < 6) return;
 
+    const frame = (d.header as { frame_id?: string } | undefined)?.frame_id;
+    if (frame !== 'odom' && (this.explorer?.active || this.exploreRequested)) { this.cancelExplore('Mapping cloud frame is not verified.'); return; }
+    if (![d.xmin, d.xmax, d.ymin, d.ymax, d.zmin, d.zmax].every(Number.isFinite)) return;
     // Forward to SLAM worker for dequantization via libvoxel.wasm
     // Worker accumulates and deduplicates points internally
     this.slamWorker.postMessage({
       type: 'newMap',
+      sessionId: this.pendingNewMapId, capturedAt: performance.now(), frame,
       data: {
         xmin: d.xmin ?? 0,
         xmax: d.xmax ?? 1,
@@ -2076,13 +2552,20 @@ export class MappingPage {
   }
 
   private lastOdomTime = 0;
-  private lastTraceX = 0;
-  private lastTraceY = 0;
+  private lastTracePoint: { x: number; y: number } | null = null;
+  private odomSource: 'mapping' | 'localization' | null = null;
 
-  private handleOdom(data: unknown): void {
+  private resetOdomTracking(): void {
+    this.lastOdomTime = 0;
+    this.lastTracePoint = null;
+    this.odomSource = null;
+    this.slamScene?.resetPoseTracking();
+  }
+
+  private handleOdom(data: unknown, source: 'mapping' | 'localization'): void {
     if (!this.slamScene) return;
 
-    // Throttle to 200ms (matching APK)
+    if (this.odomSource !== source) { this.resetOdomTracking(); this.odomSource = source; }
     const now = performance.now();
     // 50ms throttle matches the APK (20Hz). Lower throttle would let render-side
     // interpolation handle the rest, but the APK relies on the high source rate
@@ -2096,7 +2579,7 @@ export class MappingPage {
 
     const pos = d.pose?.pose?.position;
     const ori = d.pose?.pose?.orientation;
-    if (!pos || !ori) return;
+    if (!pos || !ori || ![pos.x, pos.y, pos.z, ori.x, ori.y, ori.z, ori.w].every(Number.isFinite)) return;
 
     // Extract yaw from quaternion
     const yaw = Math.atan2(2 * (ori.w * ori.z + ori.x * ori.y), 1 - 2 * (ori.y * ori.y + ori.z * ori.z));
@@ -2105,12 +2588,10 @@ export class MappingPage {
     this.slamScene.updateRobotPose({ x: pos.x, y: pos.y, z: pos.z }, yaw);
 
     // Only add trace point if moved > 0.1m (matching APK)
-    const dx = pos.x - this.lastTraceX;
-    const dy = pos.y - this.lastTraceY;
-    if (dx * dx + dy * dy > 0.01) { // 0.1^2
+    const previous = this.lastTracePoint;
+    if (!previous || Math.hypot(pos.x - previous.x, pos.y - previous.y) > 0.1) {
       this.slamScene.addTracePoint(pos.x, pos.y, 0);
-      this.lastTraceX = pos.x;
-      this.lastTraceY = pos.y;
+      this.lastTracePoint = { x: pos.x, y: pos.y };
     }
   }
 
@@ -2220,7 +2701,7 @@ export class MappingPage {
     const label = collision
       ? `This ID already exists as "${collision.name}". Save will overwrite it. New name:`
       : 'Enter map name:';
-    this.showInputModal(title, label, defaultName, (name) => {
+    const save = (name: string) => {
       if (!name) return;
       const cur = this.getSavedMaps();
       const existing = cur.findIndex((m) => m.id === idAtPrompt);
@@ -2236,7 +2717,11 @@ export class MappingPage {
       // Cache the full file set (.pcd, .pgm, .txt). The robot has one slot,
       // so we need the full set to re-upload via push_static_file later.
       void this.cacheBundleFromRobot(idAtPrompt);
-    });
+    };
+    if (this.exploreAutoSaveName) {
+      const name = this.exploreAutoSaveName; this.exploreAutoSaveName = '';
+      save(name);
+    } else this.showInputModal(title, label, defaultName, save);
   }
 
   private fetchRobotFile(filePath: string): Promise<ArrayBuffer | null> {
@@ -2255,6 +2740,9 @@ export class MappingPage {
       this.addLog('Cannot cache map: requestFile not available');
       return;
     }
+    if (this.mapTransfer) { this.addLog('Another map transfer is in progress; retry saving after it completes.'); return; }
+    this.mapTransfer = true;
+    try {
     this.addLog('Caching map files locally...');
     // Sequential: requestFile installs a single onTopicData handler, so two
     // concurrent calls clobber each other's response routing.
@@ -2265,7 +2753,7 @@ export class MappingPage {
     }
     const pgm = await this.fetchRobotFile('map.pgm');
     const txt = await this.fetchRobotFile('map.txt');
-    const bundle: MapBundle = { pcd };
+    const bundle: MapBundle = { pcd, anchor: this.anchorController.anchor(mapId) ?? undefined };
     if (pgm) bundle.pgm = pgm;
     if (txt) bundle.txt = txt;
     try {
@@ -2278,10 +2766,23 @@ export class MappingPage {
     } catch (err) {
       this.addLog(`Cache failed: ${err}`);
     }
+    } finally { this.mapTransfer = false; }
   }
 
   private async loadMap(mapId: string): Promise<void> {
+    if (this.mapLoading || this.startingMap || this.mapTransfer || this.state === 'mapping') {
+      this.addLog('Finish the current map operation before loading another map.'); return;
+    }
+    this.mapLoading = true;
+    this.mappingDrive?.stop();
+    this.anchorController.stop();
+    if (this.navigationActive) this.sendCmd('navigation/stop');
+    if (this.localized || this.localizingInProgress) this.sendCmd('localization/stop');
+    this.localized = false; this.localizingInProgress = false;
+    this.anchorPose = null; this.lastLocalizationStamp = -Infinity; this.mapLoaded = false; this.navigationActive = false;
+    this.updateFlowGating();
     this.addLog(`Loading map ${mapId}...`);
+    try {
     this.slamScene?.clearAll();
     this.slamWorker?.postMessage('clear');
     this.patrolPoints = [];
@@ -2292,6 +2793,7 @@ export class MappingPage {
     try { bundle = await getBundle(mapId); }
     catch (err) { this.addLog(`Cache lookup failed: ${err}`); return; }
 
+    if (this.disposed) return;
     // Render the PCD immediately from cache for fast feedback.
     if (bundle?.pcd) {
       this.slamScene?.clearLoadedPcd();
@@ -2300,7 +2802,8 @@ export class MappingPage {
     }
 
     // Push the full file set to the robot's single slot, then activate it.
-    if (bundle?.pcd && this.pushFile) {
+    if (bundle?.pcd && bundle.pgm && bundle.txt && this.pushFile) {
+      if (bundle.anchor) this.anchorController.restore(bundle.anchor);
       if (this.robotSlotMapId === mapId) {
         this.addLog(`Robot slot already holds ${mapId} — skipping upload`);
         // Still send set_map_id in case the active label drifted.
@@ -2309,8 +2812,10 @@ export class MappingPage {
       }
       try {
         await this.uploadBundleToRobot(bundle);
+        if (this.disposed) return;
         this.sendCmd(`common/set_map_id/${mapId}`);
         this.robotSlotMapId = mapId;
+        this.slamScene?.setAnchorMarker(this.anchorController.anchor(mapId));
         this.addLog(`Map ${mapId} activated on robot`);
       } catch (err) {
         // Upload was interrupted — the robot's slot is in an unknown state now.
@@ -2320,21 +2825,12 @@ export class MappingPage {
       return;
     }
 
-    // No cached bundle: render whatever's currently on the robot but DO NOT
-    // cache it — set_map_id only relabels, the actual files might be from a
-    // different mapping session, so caching them under this id corrupts the cache.
-    if (!bundle?.pcd) {
-      this.addLog('No local cache for this id — rendering robot\'s current slot (may differ from this map)');
-      this.sendCmd(`common/set_map_id/${mapId}`);
-      const pcd = await this.fetchRobotFile('map.pcd');
-      if (pcd) {
-        this.slamScene?.clearLoadedPcd();
-        this.slamScene?.loadPCD(pcd);
-        this.addLog(`Viewer: PCD from robot's current slot (${(pcd.byteLength / 1024).toFixed(1)} KB) — NOT cached`);
-      } else {
-        this.addLog('Failed to fetch PCD from robot');
-      }
-    }
+    // A label alone cannot prove that this robot slot contains the selected map.
+    this.currentMapId = '';
+    this.robotSlotMapId = '';
+    this.addLog('Map was not activated: a complete cached bundle and file upload are required. Import a map backup first.');
+    this.setWorkflowStatus('Cannot load this saved map without its files. Import a complete map ZIP.');
+    } finally { this.mapLoading = false; }
   }
 
   private async exportMapZip(mapId: string): Promise<void> {
@@ -2348,6 +2844,7 @@ export class MappingPage {
       return;
     }
     try {
+      bundle.anchor = this.anchorController.anchor(mapId) ?? bundle.anchor;
       const zip = bundleToZip(meta, bundle);
       const safeName = meta.name.replace(/[^\w.\-]+/g, '_').slice(0, 60) || mapId;
       downloadBlob(`${safeName}.zip`, zip);
@@ -2379,6 +2876,7 @@ export class MappingPage {
           if (!name) return;
           try {
             await putBundle(id, bundle);
+            if (bundle.anchor?.mapId === id) this.anchorController.restore(bundle.anchor);
             const maps = this.getSavedMaps();
             const idx = maps.findIndex((m) => m.id === id);
             const entry = { id, name, date: meta.date || new Date().toISOString() };
@@ -2568,7 +3066,19 @@ export class MappingPage {
     for (const topic of LOC_USLAM_TOPICS) this.unsubscribe(topic);
   }
 
+  cancelAnchorReturn(): void {
+    this.cancelExplore('Exploration paused because control was interrupted. Mapping remains active; use Stop & Save.');
+    this.mappingDrive?.stop();
+    if (this.anchorController.active) this.anchorController.stop('Return cancelled because control was interrupted.');
+  }
+
   destroy(): void {
+    this.cancelExplore('Exploration stopped because the map page closed.');
+    clearInterval(this.exploreTimer);
+    this.mappingDrive?.destroy();
+    this.nearbyView?.destroy();this.nearbyView = null;
+    this.anchorController.destroy();
+    this.disposed = true;
     this.cleanup();
     this.slamWorker?.terminate();
     this.slamWorker = null;

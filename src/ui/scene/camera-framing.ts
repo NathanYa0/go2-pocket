@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 
 /** Fit a lidar volume into the unobstructed part of the phone's viewport. */
-export function lidarFrame(bounds: THREE.Box3 | null, robot: THREE.Vector3, yaw: number, width: number, height: number, fov: number) {
+export function lidarFrame(bounds: THREE.Box3 | null, robot: THREE.Vector3, yaw: number, width: number, height: number, fov: number, reserveControls = true) {
   const w = Math.max(1, width), h = Math.max(1, height);
-  const top = Math.min(88, h * 0.22);
-  const bottom = Math.min(112, h * 0.28);
+  const top = reserveControls ? Math.min(88, h * 0.22) : 0;
+  const bottom = reserveControls ? Math.min(112, h * 0.28) : 0;
   const usableHeight = h - top - bottom;
   const box = bounds?.clone() ?? new THREE.Box3();
   box.expandByPoint(robot);

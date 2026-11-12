@@ -1,0 +1,2 @@
+export const EXPLORE_TRAVEL_METRES = 30;
+export const EXPLORE_DURATION_MS = 10 * 60_000;

@@ -27,7 +27,7 @@ export function installShell(app: App): void {
   let lastDriving: boolean | null = null;
   let displayQueue: Promise<void> = Promise.resolve();
   const updateOrientation = () => {
-    const driving = app.mobileScreen === 'control';
+    const driving = app.mobileScreen === 'control' || app.mobileScreen === 'mapping';
     const portrait = !usableDriveViewport(innerWidth, innerHeight, android);
     document.getElementById('app')!.inert = driving && portrait;
     rotate.hidden = !driving || !portrait;
@@ -35,12 +35,12 @@ export function installShell(app: App): void {
   const update = () => {
     const screen = app.mobileScreen;
     document.body.dataset.screen = screen;
-    const driving = screen === 'control';
+    const driving = screen === 'control' || screen === 'mapping';
     if (lastDriving !== driving) {
       lastDriving = driving;
       if (native) {
         displayQueue = displayQueue.then(async () => {
-          const active = app.mobileScreen === 'control';
+          const active = app.mobileScreen === 'control' || app.mobileScreen === 'mapping';
           if (android) {
             // The native window owns both orientation and bars. The orientation
             // plugin's lock() ack does not mean the rotated layout is ready.

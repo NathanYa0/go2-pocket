@@ -39,3 +39,13 @@ android/.kotlin/
 .build/
 __pycache__/
 *.pyc
+
+# Local mapping environments, captures, and generated document previews
+.venv/
+/tmp/
+/vendor/dimos/logs/
+/vendor/dimos/build/
+/vendor/dimos/*.egg-info/
+/vendor/dimos/**/*.so
+/vendor/dimos/**/*.dylib
+/vendor/dimos/.pytest_cache/

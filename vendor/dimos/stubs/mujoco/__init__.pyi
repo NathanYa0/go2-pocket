@@ -1,0 +1,168 @@
+"""mujoco is ~20 MB, so we have a stub to avoid installing in lint job."""
+
+from collections.abc import Callable
+from typing import Any
+
+import numpy as np
+from numpy.typing import NDArray
+
+# --- model / data -----------------------------------------------------
+
+class MjModel:
+    nq: int
+    nv: int
+    nu: int
+    njnt: int
+    qpos0: NDArray[np.float64]
+    keyframe: Callable[[str | int], Any]
+    # Mujoco's `MjModel` exposes hundreds of arrays (cam_*, jnt_*,
+    # actuator_*, body_*, site_*, tendon_*, wrap_*, sensor_*, opt, …).
+    # Listing every one is impractical; type rare accesses as `Any` so
+    # mypy lets dimos use them without us tracking every API addition.
+    def __getattr__(self, name: str) -> Any: ...
+    @classmethod
+    def from_xml_path(cls, path: str) -> MjModel: ...
+    @classmethod
+    def from_xml_string(cls, xml: str, assets: dict[str, bytes] | None = ...) -> MjModel: ...
+
+class MjData:
+    qpos: NDArray[np.float64]
+    qvel: NDArray[np.float64]
+    ctrl: NDArray[np.float64]
+    time: float
+    # See `MjModel.__getattr__`. Same idea for the per-step state arrays
+    # (cam_xmat, mocap_pos, sensor, actuator_force, …).
+    def __getattr__(self, name: str) -> Any: ...
+    def __init__(self, model: MjModel) -> None: ...
+
+class MjSpec:
+    meshdir: str
+    worldbody: Any
+    # The MjSpec editing API is large (add_mesh, add_body, attach, …); rare
+    # accesses are Any, same approach as MjModel.
+    def __getattr__(self, name: str) -> Any: ...
+    def __init__(self) -> None: ...
+    @classmethod
+    def from_file(cls, path: str) -> MjSpec: ...
+    @classmethod
+    def from_string(cls, xml: str) -> MjSpec: ...
+    def compile(self) -> MjModel: ...
+
+class MjvOption:
+    geomgroup: NDArray[np.uint8]
+    def __init__(self) -> None: ...
+
+class MjvCamera:
+    lookat: NDArray[np.float64]
+    distance: float
+    azimuth: float
+    elevation: float
+    def __init__(self) -> None: ...
+
+class MjvScene:
+    flags: NDArray[np.uint8]
+    geoms: Any
+    ngeom: int
+
+class Renderer:
+    def __init__(self, model: MjModel, height: int = ..., width: int = ...) -> None: ...
+    def __enter__(self) -> Renderer: ...
+    def __exit__(self, *args: object) -> None: ...
+    @property
+    def scene(self) -> MjvScene: ...
+    def update_scene(
+        self,
+        data: MjData,
+        camera: int | str | Any = ...,
+        scene_option: MjvOption | None = ...,
+    ) -> None: ...
+    def render(self) -> NDArray[np.uint8]: ...
+    def enable_depth_rendering(self) -> None: ...
+    def enable_segmentation_rendering(self) -> None: ...
+    def close(self) -> None: ...
+
+# --- top-level functions ----------------------------------------------
+
+def mj_forward(model: MjModel, data: MjData) -> None: ...
+def mjv_initGeom(
+    geom: Any,
+    type: int,
+    size: NDArray[np.float64],
+    pos: NDArray[np.float64],
+    mat: NDArray[np.float64],
+    rgba: NDArray[np.float32],
+) -> None: ...
+def mj_step(model: MjModel, data: MjData, nstep: int = ...) -> None: ...
+def mj_resetDataKeyframe(model: MjModel, data: MjData, key: int) -> None: ...
+def mj_name2id(model: MjModel, type: int, name: str | None) -> int: ...
+def mj_id2name(model: MjModel, type: int, id: int) -> str | None: ...
+def mj_saveModel(model: MjModel, filename: str, buffer: Any = ...) -> None: ...
+def mj_multiRay(
+    m: MjModel,
+    d: MjData,
+    pnt: NDArray[np.float64],
+    vec: NDArray[np.float64],
+    geomgroup: NDArray[np.uint8] | None,
+    flg_static: int,
+    bodyexclude: int,
+    geomid: NDArray[np.int32],
+    dist: NDArray[np.float64],
+    normal: NDArray[np.float64] | None,
+    nray: int,
+    cutoff: float,
+) -> None: ...
+def set_mjcb_control(
+    cb: Callable[[MjModel, MjData], None] | None,
+) -> None: ...
+
+# --- enum-like namespaces ---------------------------------------------
+
+class mjtObj:
+    mjOBJ_ACTUATOR: int
+    mjOBJ_BODY: int
+    mjOBJ_CAMERA: int
+    mjOBJ_GEOM: int
+    mjOBJ_JOINT: int
+    mjOBJ_KEY: int
+    mjOBJ_MESH: int
+    mjOBJ_SITE: int
+    mjOBJ_TENDON: int
+
+class mjtCamera:
+    mjCAMERA_FREE: int
+    mjCAMERA_TRACKING: int
+
+class mjtRndFlag:
+    mjRND_REFLECTION: int
+
+class mjtGeom:
+    mjGEOM_PLANE: int
+    mjGEOM_SPHERE: int
+    mjGEOM_CAPSULE: int
+    mjGEOM_CYLINDER: int
+    mjGEOM_BOX: int
+    mjGEOM_MESH: int
+
+class mjtTexture:
+    mjTEXTURE_2D: int
+
+class mjtBuiltin:
+    mjBUILTIN_CHECKER: int
+
+class mjtTextureRole:
+    mjTEXROLE_RGB: int
+
+class mjtLightType:
+    mjLIGHT_DIRECTIONAL: int
+    mjLIGHT_SPOT: int
+
+class mjtJoint:
+    mjJNT_HINGE: int
+    mjJNT_SLIDE: int
+
+class mjtTrn:
+    mjTRN_JOINT: int
+    mjTRN_TENDON: int
+
+class mjtWrap:
+    mjWRAP_JOINT: int

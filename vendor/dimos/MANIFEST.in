@@ -1,0 +1,54 @@
+global-exclude *.pyc
+global-exclude __pycache__
+global-exclude .DS_Store
+
+# --- Runtime data shipped inside the package ---
+# include-package-data=true maps everything matched here into the wheel too.
+# Scoped by extension on purpose: docs (*.md), native build files (*.nix,
+# *.lock, *.patch, CMakeLists.txt, Dockerfile) and .gitignore are NOT Python
+# runtime data and must stay out. Add a new extension here when code starts
+# loading a new data type — never go back to per-package globs.
+recursive-include dimos *.yaml *.yml *.json *.urdf *.html *.css *.js *.svg *.tcss
+include dimos/robot/galaxea/r1pro/vendor_setup.sh
+
+# --- Exclusions (must come after the includes above so they win) ---
+# Test fixtures must never ship.
+recursive-exclude dimos/agents/fixtures *
+recursive-exclude dimos/agents/mcp/fixtures *
+recursive-exclude dimos/mapping/google_maps/fixtures *
+
+# The on-robot agent's Node package runs from a checkout, never from the package.
+prune dimos/agents/node_modules
+prune dimos/agents/dist
+exclude dimos/agents/package.json dimos/agents/package-lock.json
+exclude dimos/agents/tsconfig.json dimos/agents/.prettierrc.json
+
+# Exclude web development directories
+recursive-exclude dimos/web/websocket_vis/node_modules *
+
+# Deno relay sources (repo-root web/): shipped inside the wheel by the
+# build_py hook in setup.py (copied to dimos/web/relay_bridge/_relay_dist).
+# The graft keeps them in the sdist so sdist->wheel builds (uv build, pip)
+# can reproduce that copy.
+# Per directory: `graft web` walks web/node_modules symlinks and loses their targets.
+graft web/cockpit
+graft web/examples
+graft web/relay
+graft web/sdk
+graft web/shared
+include web/README.md web/deno.json web/deno.lock
+prune web/cockpit/node_modules
+prune web/sdk/node_modules
+
+# Exclude development files
+exclude .gitignore
+exclude .gitattributes
+prune .git
+prune .github
+prune .mypy_cache
+prune .pytest_cache
+prune .ruff_cache
+prune .vscode
+
+global-exclude test_*.py
+global-exclude conftest.py

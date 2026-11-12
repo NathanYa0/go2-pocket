@@ -1,0 +1,1407 @@
+[
+  {
+    "path": "assets/framecount.mp4",
+    "oid": "sha256:92256a9cceda2410ec26d58b92f457070e54deb39bf3e6e5aca174e2c7cff216",
+    "bytes": 34548239
+  },
+  {
+    "path": "assets/readme/agentic_control.gif",
+    "oid": "sha256:eb0411de5e5967be8773d5d95e692a6a5859f75bb400164451a3b383b1025fb4",
+    "bytes": 2416274
+  },
+  {
+    "path": "assets/readme/agentic_manipulation.gif",
+    "oid": "sha256:840dd4f10dab637c53934d0ae062d0a8a1d18a83b0646b12bcd0c3a89b96b95d",
+    "bytes": 3521387
+  },
+  {
+    "path": "assets/readme/agents.png",
+    "oid": "sha256:a255d32f9a0ecff12d99dda9b8a51e0958ac282d7a0f814f93fd39261afaf84d",
+    "bytes": 477123
+  },
+  {
+    "path": "assets/readme/dimos_demo.gif",
+    "oid": "sha256:fda7f7a859ce98002e0faef88fb2942f395e19995b36b585c48447ec5a9435ee",
+    "bytes": 24011189
+  },
+  {
+    "path": "assets/readme/drone_swarm.gif",
+    "oid": "sha256:761974c3da5e2f3dc21d2d1dc229ba940f824418b13ebdd6cdd489ff4151843a",
+    "bytes": 4268213
+  },
+  {
+    "path": "assets/readme/lidar.gif",
+    "oid": "sha256:d47badc970572aa7badf98c908490c8b86ea9f1cafbb18507cfdb5d08655cdfb",
+    "bytes": 5900150
+  },
+  {
+    "path": "assets/readme/lidar.png",
+    "oid": "sha256:65b1797fd9ac8edae5dce0691397b6aca2e975badfd58462ed8e20a4dace655e",
+    "bytes": 927067
+  },
+  {
+    "path": "assets/readme/navigation.gif",
+    "oid": "sha256:64e7965f421916cdb71667a9ed99eab96c14c64bd195bd483628d1b9b9a4e95c",
+    "bytes": 4395592
+  },
+  {
+    "path": "assets/readme/navigation.png",
+    "oid": "sha256:472cabca4b0d661658bf9ffbde78e636668e9ef6499dc38ea0f552557d735bd9",
+    "bytes": 617989
+  },
+  {
+    "path": "assets/readme/perception.png",
+    "oid": "sha256:48e4c61c1ec588d56d61a74fd9f0d9251eadc042e7a514fb1896826d52a32988",
+    "bytes": 797817
+  },
+  {
+    "path": "assets/readme/spacer.png",
+    "oid": "sha256:4a16ec40112698cf02b9abd3d18c8db65ce40f48f2c61076b45de58695f16532",
+    "bytes": 66
+  },
+  {
+    "path": "assets/readme/spatial_memory.gif",
+    "oid": "sha256:50b9cb7898ae8d238a088252fd96d2278a1be96a0dbb761839bc58c99c17f7a7",
+    "bytes": 4655580
+  },
+  {
+    "path": "assets/simple_demo.mp4",
+    "oid": "sha256:ff2459b880baaa509e8e0de8a45e8da48ebf7cb28d4927c62b10906baa83bda0",
+    "bytes": 50951922
+  },
+  {
+    "path": "assets/simple_demo_small.gif",
+    "oid": "sha256:9a2b9a95d5b27cbc135cb84f6c6bc2131fa234403466befd2ee8ea81e2b2de45",
+    "bytes": 33374003
+  },
+  {
+    "path": "assets/trimmed_video_office.mov",
+    "oid": "sha256:d72f0cf95ce1728b4a0855d6b3fe4573f5e2e86fae718720c19a84198bdcbf9d",
+    "bytes": 2311156
+  },
+  {
+    "path": "data/.lfs/ab_lidar_frames.tar.gz",
+    "oid": "sha256:ab4efaf5d7d4303424868fecaf10083378007adf20244fd17ed934e37f2996da",
+    "bytes": 116271
+  },
+  {
+    "path": "data/.lfs/alfred_description.tar.gz",
+    "oid": "sha256:10eb049889e68d01f6f4203010a0e7cebb011429b9a2692157b2375e4daeebfb",
+    "bytes": 7348865
+  },
+  {
+    "path": "data/.lfs/alfred_fusion_short.db.tar.gz",
+    "oid": "sha256:2f682fca9ba5a1fc8668685687bf24c7af12cb6357efeee8eebe081b87c57d60",
+    "bytes": 496145
+  },
+  {
+    "path": "data/.lfs/alfred_stereo_short.db.tar.gz",
+    "oid": "sha256:76622d11dd08390922eb92e5912e4783a008c7d375afdebf97fb79b6a8b6ade1",
+    "bytes": 79364977
+  },
+  {
+    "path": "data/.lfs/apartment.tar.gz",
+    "oid": "sha256:8d2c44f39573a80a65aeb6ccd3fcb1c8cb0741dbc7286132856409e88e150e77",
+    "bytes": 18141029
+  },
+  {
+    "path": "data/.lfs/assets.tar.gz",
+    "oid": "sha256:7b14b01f5c907f117331213abfce9ef5d0c41d0524e14327b5cc706520fb2035",
+    "bytes": 2306191
+  },
+  {
+    "path": "data/.lfs/astar_corner_min_cost.png.tar.gz",
+    "oid": "sha256:42517c5f67a9f06949cb2015a345f9d6b43d22cafd50e1fefb9b5d24d8b72509",
+    "bytes": 5671
+  },
+  {
+    "path": "data/.lfs/astar_min_cost.png.tar.gz",
+    "oid": "sha256:06b67aa0d18c291c3525e67ca3a2a9ab2530f6fe782a850872ba4c343353a20a",
+    "bytes": 12018
+  },
+  {
+    "path": "data/.lfs/big_office.ply.tar.gz",
+    "oid": "sha256:7eabc682f75e1725a07df51bb009d3950190318d119d54d0ad8c6b7104f175e3",
+    "bytes": 2355227
+  },
+  {
+    "path": "data/.lfs/big_office_height_cost_occupancy.png.tar.gz",
+    "oid": "sha256:6d8e7d096f1108d45ebdad760c4655de1e1d50105ca59c5188e79cb1a7c0d4a9",
+    "bytes": 133051
+  },
+  {
+    "path": "data/.lfs/big_office_simple_occupancy.png.tar.gz",
+    "oid": "sha256:dded2e28694de9ec84a91a686b27654b83c604f44f4d3e336d5cd481e88d3249",
+    "bytes": 28146
+  },
+  {
+    "path": "data/.lfs/cafe-smol.jpg.tar.gz",
+    "oid": "sha256:dd0c1e5aa5e8ec856cb471c5ed256c2d3a5633ed9a1e052291680eb86bf89a5e",
+    "bytes": 8298
+  },
+  {
+    "path": "data/.lfs/cafe.jpg.tar.gz",
+    "oid": "sha256:b8cf30439b41033ccb04b09b9fc8388d18fb544d55b85c155dbf85700b9e7603",
+    "bytes": 136165
+  },
+  {
+    "path": "data/.lfs/chair-image.png.tar.gz",
+    "oid": "sha256:1f3478f472b5750f118cf7225c2028beeaae41f1b4b726c697ac8c9b004eccbf",
+    "bytes": 48504
+  },
+  {
+    "path": "data/.lfs/china_office.db.tar.gz",
+    "oid": "sha256:c9cc090521679a1f7c3027e473772ad67b4ed70edd4521c641406234a3def089",
+    "bytes": 4347772302
+  },
+  {
+    "path": "data/.lfs/china_office.pcap.tar.gz",
+    "oid": "sha256:1aa9f8f8b335743ec9a916a4e0d7dba9d60f313309e8840cb1d80149e42b72ca",
+    "bytes": 1473636230
+  },
+  {
+    "path": "data/.lfs/cone_eval_assets.tar.gz",
+    "oid": "sha256:a4df78795a5c5148276d354adb5e1dab378811c05c477ac9da87ae00a037fa61",
+    "bytes": 40434
+  },
+  {
+    "path": "data/.lfs/drone.tar.gz",
+    "oid": "sha256:dd73f988eee8fd7b99d6c0bf6a905c2f43a6145a4ef33e9eef64bee5f53e04dd",
+    "bytes": 709946060
+  },
+  {
+    "path": "data/.lfs/dual_openyam_abc_box_v2.tar.gz",
+    "oid": "sha256:f0c4802e4001a514054f01485828f7e69cd6bc97b6169b3a26e49a445e0b0539",
+    "bytes": 2488468
+  },
+  {
+    "path": "data/.lfs/expected_occupancy_scene.xml.tar.gz",
+    "oid": "sha256:e3eb91f3c7787882bf26a69df21bb1933d2f6cd71132ca5f0521e2808269bfa2",
+    "bytes": 6777
+  },
+  {
+    "path": "data/.lfs/g1_sf_office.db.tar.gz",
+    "oid": "sha256:a9c3da0a657297ccbf96ed350ecd9c021d884028d47a6fd85e909b78c6d829bf",
+    "bytes": 655275460
+  },
+  {
+    "path": "data/.lfs/g1_urdf.tar.gz",
+    "oid": "sha256:c8e1ed990471461d54069876873b1feddaf23171222413d03ce20a809c1da95b",
+    "bytes": 43232580
+  },
+  {
+    "path": "data/.lfs/g1_wholebody_replay.json.tar.gz",
+    "oid": "sha256:8bffca753401f78587ba743d19fc3493aac7ffdb9a42c3863299082e62da2788",
+    "bytes": 1147342
+  },
+  {
+    "path": "data/.lfs/g1_zed.tar.gz",
+    "oid": "sha256:955094035b3ac1edbc257ca1d24fa131f79ac6f502c8b35cc50329025c421dbe",
+    "bytes": 1029559759
+  },
+  {
+    "path": "data/.lfs/go2_bigoffice.db.tar.gz",
+    "oid": "sha256:e66f5472e72f370446d8dcd802f70f3c3c07e4e083c5d6a394873877dec4c88d",
+    "bytes": 196309743
+  },
+  {
+    "path": "data/.lfs/go2_china_office.db.tar.gz",
+    "oid": "sha256:834539871fd325b15f3079a3490b278c54e78d0d40bfa1342dbdc983f6a3ee02",
+    "bytes": 136080653
+  },
+  {
+    "path": "data/.lfs/go2_china_office_indoor.mcap.tar.gz",
+    "oid": "sha256:569b8401f15745ef68663dc3ac5fba0dcbdc7ed4ac9f599b3a9db895f63bf2a4",
+    "bytes": 1670777651
+  },
+  {
+    "path": "data/.lfs/go2_dds_china_office.mcap.tar.gz",
+    "oid": "sha256:0e86656ce07ae466a84b85e0d21982faea58708324f47b2dd2728368e8c8680c",
+    "bytes": 426702644
+  },
+  {
+    "path": "data/.lfs/go2_dds_stairs.mcap.tar.gz",
+    "oid": "sha256:8ad28ba489eb66eb42b6a636e6060d448f15b3807259472dd3e6ca1d0fc2c1c1",
+    "bytes": 344230938
+  },
+  {
+    "path": "data/.lfs/go2_hongkong_office.db.tar.gz",
+    "oid": "sha256:d1bb7de9a090b4053ba1ee4f36d776e439d970cba08ebb489f9311f26946f56c",
+    "bytes": 772688230
+  },
+  {
+    "path": "data/.lfs/go2_hongkong_office_twopass_map.pc2.lcm.tar.gz",
+    "oid": "sha256:55f8f15e969a72ef59e88fe6faaabf0bacca23672ed5629db2fa30eaaf336e75",
+    "bytes": 2673318
+  },
+  {
+    "path": "data/.lfs/go2_l1_knock.db.tar.gz",
+    "oid": "sha256:fa73d0b8386b1ec834d986f6469c21c852193a835ebb6c1c0dcdf1c4ffc35f08",
+    "bytes": 5866222
+  },
+  {
+    "path": "data/.lfs/go2_mid360_china_office_2026-06-12.db.tar.gz",
+    "oid": "sha256:0d653e74b9a4e8a4c89310b8b070e6251fece3fe43044943d9f7df8242d13e7d",
+    "bytes": 3770421309
+  },
+  {
+    "path": "data/.lfs/go2_mid360_china_office_2026-06-12.pc2.lcm.tar.gz",
+    "oid": "sha256:4fc8fd61f10357ceef671c2d4cd23c771cb64c84f910e8d6198b193299584c4e",
+    "bytes": 13056204
+  },
+  {
+    "path": "data/.lfs/go2_mid360_office_2026-09-02.db.tar.gz",
+    "oid": "sha256:13f712d5f86f86c57623f29c46c9692ca59bb99ccd63dad3f787149d383196cf",
+    "bytes": 679425882
+  },
+  {
+    "path": "data/.lfs/go2_mid360_office_2026-09-02.pcap.tar.gz",
+    "oid": "sha256:eacc0b8553fbf4c6eeb2f80870d486c98cc64b573d0b9bbeb86a1f3b1156660f",
+    "bytes": 885814544
+  },
+  {
+    "path": "data/.lfs/go2_mid360_sf_office_outdoors_2026-05-29.db.tar.gz",
+    "oid": "sha256:a18199b11bd440f74569823eb6a5c553bd538b52001cabf7cc40790ab72a8db0",
+    "bytes": 1482890829
+  },
+  {
+    "path": "data/.lfs/go2_mid360_sf_office_outdoors_2026-05-29.pc2.lcm.tar.gz",
+    "oid": "sha256:cafd65f2649364210dc0c26ba55aabc85f924756d522fabf74fe51bae7ef132a",
+    "bytes": 61116550
+  },
+  {
+    "path": "data/.lfs/go2_mid360_stairs.db.tar.gz",
+    "oid": "sha256:02d8d2194332291cf71988458965aa9f8019b8d61661ff153e93886dd72e85e9",
+    "bytes": 54082131
+  },
+  {
+    "path": "data/.lfs/go2_sf_office.tar.gz",
+    "oid": "sha256:dab40e2310e8397bc20046dfd23475c805c973eaa94043eb87e23ba43e2774fb",
+    "bytes": 25533811
+  },
+  {
+    "path": "data/.lfs/go2_short.db.tar.gz",
+    "oid": "sha256:8a19846a0adf5755815fd039492c0255e0bc282e9df75a06648d7585cae8d2d2",
+    "bytes": 83971952
+  },
+  {
+    "path": "data/.lfs/go2_sim.tar.gz",
+    "oid": "sha256:f4a154d8be7ba9855c8292fde5e051dda591a35d58a1d74b63484b8ef679575c",
+    "bytes": 5428935
+  },
+  {
+    "path": "data/.lfs/go2_slamabuse1.db.tar.gz",
+    "oid": "sha256:a85feac43debdebf344c567483ab7d1bec12c3cf9e4df26034260a24e225f219",
+    "bytes": 285259757
+  },
+  {
+    "path": "data/.lfs/go2_slamabuse2.db.tar.gz",
+    "oid": "sha256:7d9a13596cf3d9a50e437fa89e8a3d68d843587116681564b4de7422b53c54dd",
+    "bytes": 306440341
+  },
+  {
+    "path": "data/.lfs/go2dds_data1.tar.gz",
+    "oid": "sha256:dfd237ce49cef1f96074ba02576b9a8094db6d6e0dc9ca24b63e5fdaa84acaf2",
+    "bytes": 224684671
+  },
+  {
+    "path": "data/.lfs/gradient_simple.png.tar.gz",
+    "oid": "sha256:e418f2a6858c757cb72bd25772749a1664c97a407682d88ad2b51c4bbdcb8006",
+    "bytes": 11568
+  },
+  {
+    "path": "data/.lfs/gradient_voronoi.png.tar.gz",
+    "oid": "sha256:3867c0fb5b00f8cb5e0876e5120a70d61f7da121c0a3400010743cc858ee2d54",
+    "bytes": 20680
+  },
+  {
+    "path": "data/.lfs/groot.tar.gz",
+    "oid": "sha256:305ed4b8538cb8083d91518e687b184b374c977afd185adecabc1152cef8d701",
+    "bytes": 3517892
+  },
+  {
+    "path": "data/.lfs/habitat_cones_0.db.tar.gz",
+    "oid": "sha256:7346545bfa828d75230ad53225947b088abfdd3e4e92487f50aa51d3b164904e",
+    "bytes": 15420880
+  },
+  {
+    "path": "data/.lfs/habitat_cones_5.db.tar.gz",
+    "oid": "sha256:a1143f6964d4f00fd5e6abe38dad2b24e70c81944fe99d5d17ee7ed5cd792ab7",
+    "bytes": 15460628
+  },
+  {
+    "path": "data/.lfs/hk_building_all_around.db.tar.gz",
+    "oid": "sha256:b2f0a4ab761bd65f2a6460e7f2f647509b7fc109cd2806f22abc06fd7514947a",
+    "bytes": 278231095
+  },
+  {
+    "path": "data/.lfs/hk_building_elevator.db.tar.gz",
+    "oid": "sha256:53cb870397fc830f93f0fc3f8b7b1d7fe885894843f06b3bd6928e7551101869",
+    "bytes": 114421458
+  },
+  {
+    "path": "data/.lfs/hk_building_enterance.db.tar.gz",
+    "oid": "sha256:5f6ff66e6f22bd19e39b0b1093c1bdc1a735a4d8dd8dbbb5d7ce90a876746b27",
+    "bytes": 144842133
+  },
+  {
+    "path": "data/.lfs/hk_building_park.db.tar.gz",
+    "oid": "sha256:6c84276cc26fc649eeb4d9eefd3bd0247fed14f4fd3209955aa947b5061f05aa",
+    "bytes": 124098635
+  },
+  {
+    "path": "data/.lfs/hk_village1.db.tar.gz",
+    "oid": "sha256:b22392beae1b055743a00090317dc4191d4e7cef6d1f2114fdde19e1b35597ab",
+    "bytes": 207852261
+  },
+  {
+    "path": "data/.lfs/hk_village2.db.tar.gz",
+    "oid": "sha256:58acf7449bb1e9a0258f842113781ab7cabdd2a3ac4a49db0a574b701df21c50",
+    "bytes": 164625597
+  },
+  {
+    "path": "data/.lfs/hk_village3.db.tar.gz",
+    "oid": "sha256:d575b524bf95a0f5c505d31d4b5eaac00a00457d8b82bb49a3b849bc37d51ff7",
+    "bytes": 132125897
+  },
+  {
+    "path": "data/.lfs/hk_village4.db.tar.gz",
+    "oid": "sha256:7f63d0c2f642e4b2463ae9ed7a1c3faa81d978907e105b798b50af7b76c045ed",
+    "bytes": 287082427
+  },
+  {
+    "path": "data/.lfs/hk_village5.db.tar.gz",
+    "oid": "sha256:0a9970fae362220d1e2d67ccb81ea0ec25610db2d2a53409b00fe8635d590940",
+    "bytes": 173241480
+  },
+  {
+    "path": "data/.lfs/hk_village6.db.tar.gz",
+    "oid": "sha256:9637f2c78025d2eec238396a3697334a35350dae42c59346b0f7fc748743c63c",
+    "bytes": 227454066
+  },
+  {
+    "path": "data/.lfs/inflation_simple.png.tar.gz",
+    "oid": "sha256:658ed8cafc24ac7dc610b7e5ae484f23e1963872ffc2add0632ee61a7c20492d",
+    "bytes": 3412
+  },
+  {
+    "path": "data/.lfs/lcm_msgs.tar.gz",
+    "oid": "sha256:245395d0c3e200fcfcea8de5de217f645362b145b200c81abc3862e0afc1aa7e",
+    "bytes": 327201
+  },
+  {
+    "path": "data/.lfs/make_navigation_map_mixed.png.tar.gz",
+    "oid": "sha256:36ea27a2434836eb309728f35033674736552daeb82f6e41fb7e3eb175d950da",
+    "bytes": 13084
+  },
+  {
+    "path": "data/.lfs/make_navigation_map_simple.png.tar.gz",
+    "oid": "sha256:a0d211fa1bc517ef78e8dc548ebff09f58ad34c86d28eb3bd48a09a577ee5d1e",
+    "bytes": 11767
+  },
+  {
+    "path": "data/.lfs/make_path_mask_full.png.tar.gz",
+    "oid": "sha256:b772d266dffa82ccf14f13c7d8cc2443210202836883c80f016a56d4cfe2b52a",
+    "bytes": 11213
+  },
+  {
+    "path": "data/.lfs/make_path_mask_two_meters.png.tar.gz",
+    "oid": "sha256:da608d410f4a1afee0965abfac814bc05267bdde31b0d3a9622c39515ee4f813",
+    "bytes": 11395
+  },
+  {
+    "path": "data/.lfs/markers_go2.db.tar.gz",
+    "oid": "sha256:5a43529f8dbc2aedcccca6ae89747235826123c2bc066e0dc8b87c2042219dae",
+    "bytes": 99270761
+  },
+  {
+    "path": "data/.lfs/mid360_athens_stairs.db.tar.gz",
+    "oid": "sha256:84f62447cdfa6cfd451a441dbc39ceb6fffe6ce797f12ff68f811c854381c948",
+    "bytes": 152656661
+  },
+  {
+    "path": "data/.lfs/mid360_athens_stairs.pcap.tar.gz",
+    "oid": "sha256:0b8c01cd6134c9457bb743726a1b0cd2715698ff32009b4c0edcb9ff26dff41f",
+    "bytes": 350565045
+  },
+  {
+    "path": "data/.lfs/mid360_shake_stairs.tar.gz",
+    "oid": "sha256:d4ceef532f63b72ec2860003451df19baeece8ddf4360d34cb93e022d1294c29",
+    "bytes": 135443762
+  },
+  {
+    "path": "data/.lfs/models_clip.tar.gz",
+    "oid": "sha256:102f11bb0aa952b3cebc4491c5ed3f2122e8c38c76002e22400da4f1e5ca90c5",
+    "bytes": 392327708
+  },
+  {
+    "path": "data/.lfs/models_contact_graspnet.tar.gz",
+    "oid": "sha256:431c4611a9e096fd8b0a83fecda39c5a575e72fa933f7bd29ff8cfad5bbb5f9d",
+    "bytes": 52149165
+  },
+  {
+    "path": "data/.lfs/models_edgetam.tar.gz",
+    "oid": "sha256:cd452096f91415ce7ca90548a06a87354ccdb19a66925c0242413c80b08f5c57",
+    "bytes": 51988780
+  },
+  {
+    "path": "data/.lfs/models_fastsam.tar.gz",
+    "oid": "sha256:682cb3816451bd73722cc430fdfce15bbe72a07e50ef2ea81ddaed61d1f22a25",
+    "bytes": 39971209
+  },
+  {
+    "path": "data/.lfs/models_graspgen.tar.gz",
+    "oid": "sha256:058ff764c043dccc516c1519a1e23207500c20a10c432c15eb5e30104477c0a4",
+    "bytes": 2117602984
+  },
+  {
+    "path": "data/.lfs/models_yolo.tar.gz",
+    "oid": "sha256:01796d5884cf29258820cf0e617bf834e9ffb63d8a4c7a54eea802e96fe6a818",
+    "bytes": 72476992
+  },
+  {
+    "path": "data/.lfs/models_yoloe.tar.gz",
+    "oid": "sha256:7a78e39477667b25c9454f846cd66dc044dd05981b2f7ebb0d331ef3626de9bc",
+    "bytes": 184892540
+  },
+  {
+    "path": "data/.lfs/mujoco_office_555.tar.gz",
+    "oid": "sha256:557f52ae7d224fc250f42957035a60a3921ad1c4ea22ed2e714bc49e21ba30af",
+    "bytes": 1167195
+  },
+  {
+    "path": "data/.lfs/mujoco_sim.tar.gz",
+    "oid": "sha256:4232d61e4af19dee0c0e3a8f55f2c1b48b28a70f810ff17039876a48b999d6d2",
+    "bytes": 60251722
+  },
+  {
+    "path": "data/.lfs/occupancy_general.png.tar.gz",
+    "oid": "sha256:b770d950cf7206a67ccdfd8660ee0ab818228faa9ebbf1a37cbf6ee9d1ac7539",
+    "bytes": 2970
+  },
+  {
+    "path": "data/.lfs/occupancy_simple.npy.tar.gz",
+    "oid": "sha256:e1cf83464442fb284b6f7ba2752546fc4571a73f3490c24a58fb45987555a66c",
+    "bytes": 1954
+  },
+  {
+    "path": "data/.lfs/occupancy_simple.png.tar.gz",
+    "oid": "sha256:6c9dac221a594c87d0baa60b8c678c63a0c215325080b34ee60df5cc1e1c331d",
+    "bytes": 3311
+  },
+  {
+    "path": "data/.lfs/office_building_1.tar.gz",
+    "oid": "sha256:70aac31ca76597b3eee1ddfcbe2ba71d432fd427176f66d8281d75da76641f49",
+    "bytes": 1061581652
+  },
+  {
+    "path": "data/.lfs/office_lidar.tar.gz",
+    "oid": "sha256:f4958965334660c4765553afa38081f00a769c8adf81e599e63fabc866c490fd",
+    "bytes": 28576272
+  },
+  {
+    "path": "data/.lfs/office_scene_cooking_example.tar.gz",
+    "oid": "sha256:4b08239f9487ca193aee98d42b5d80bdd3ead50100698af3f6eeaddc85c49d47",
+    "bytes": 318379642
+  },
+  {
+    "path": "data/.lfs/osm_map_test.tar.gz",
+    "oid": "sha256:25097f1bffebd2651f1f4ba93cb749998a064adfdc0cb004981b2317f649c990",
+    "bytes": 1062262
+  },
+  {
+    "path": "data/.lfs/overlay_occupied.png.tar.gz",
+    "oid": "sha256:0b55bcf7a2a7a5cbdfdfe8c6a75c53ffe5707197d991d1e39e9aa9dc22503397",
+    "bytes": 3657
+  },
+  {
+    "path": "data/.lfs/person.tar.gz",
+    "oid": "sha256:332c3196c6436e7d4c2b7e3314b4a4055865ef358b2e9cf3c8ddd7e173f39b93",
+    "bytes": 2535758
+  },
+  {
+    "path": "data/.lfs/piper.tar.gz",
+    "oid": "sha256:c2de07119ba33de9b5c1a2fdc02fee8cabc7775829d5064eff00ea65b949ff5f",
+    "bytes": 7475509
+  },
+  {
+    "path": "data/.lfs/raw_odometry_rotate_walk.tar.gz",
+    "oid": "sha256:396345f0cd7a94bb9d85540d4bbce01b027618972f83e713e4550abf1d6ec445",
+    "bytes": 15685
+  },
+  {
+    "path": "data/.lfs/recording_go2_mid360_2026-05-29_4-45pm-PST.db.tar.gz",
+    "oid": "sha256:4b89c53b5a32c9b262b821904031a66143132464e23413ff3f77fad98d363790",
+    "bytes": 1384605823
+  },
+  {
+    "path": "data/.lfs/recording_go2_mid360_2026-05-29_4-45pm-PST_corrected.db.tar.gz",
+    "oid": "sha256:e913ca4c640c1bfcce523d67fffbac80b3220d2ed94289cbb6bd966e1c68a78d",
+    "bytes": 1365230944
+  },
+  {
+    "path": "data/.lfs/recording_go2_mid360_2026-05-29_4-45pm-PST_corrected.pc2.lcm.tar.gz",
+    "oid": "sha256:50ce11bdce6ca3643712bab86676b3e990b7a4c7669098ddb21521e59b350aa9",
+    "bytes": 61116562
+  },
+  {
+    "path": "data/.lfs/replay_g1.tar.gz",
+    "oid": "sha256:19ad1c53c4f8f9414c0921b94cd4c87e81bf0ad676881339f15ae2d8a8619311",
+    "bytes": 557410250
+  },
+  {
+    "path": "data/.lfs/replay_g1_run.tar.gz",
+    "oid": "sha256:00cf21f65a15994895150f74044f5d00d7aa873d24f071d249ecbd09cb8f2b26",
+    "bytes": 559554274
+  },
+  {
+    "path": "data/.lfs/resample_path_simple.png.tar.gz",
+    "oid": "sha256:0b5c454ed6cc66cf4446ce4a246464aec27368da4902651b4ad9ed29b3ba56ec",
+    "bytes": 118319
+  },
+  {
+    "path": "data/.lfs/resample_path_smooth.png.tar.gz",
+    "oid": "sha256:6cc0dfd80bada94f2ab1bb577e2ec1734dad6894113f2fe77964bd80d886c3d3",
+    "bytes": 109699
+  },
+  {
+    "path": "data/.lfs/rgbd_frames.tar.gz",
+    "oid": "sha256:381b9fd296a885f5211a668df16c68581d2aee458c8734c3256a7461f0decccd",
+    "bytes": 948391033
+  },
+  {
+    "path": "data/.lfs/robosuite.tar.gz",
+    "oid": "sha256:998a31316ebc2aff5501f771a30daccf7b7faae4f1867b63662a13723eb5fd72",
+    "bytes": 48401871
+  },
+  {
+    "path": "data/.lfs/scene_packages.tar.gz",
+    "oid": "sha256:e362afc6c6f712b07e570dacb06e9a6c6fb2a29db6a9970556bd7acd233f2064",
+    "bytes": 1671132987
+  },
+  {
+    "path": "data/.lfs/security_detection.png.tar.gz",
+    "oid": "sha256:7952034063d4216cb03b870ba8f20f51b59883767ee198880d58a5859151775c",
+    "bytes": 42747
+  },
+  {
+    "path": "data/.lfs/security_no_detection.png.tar.gz",
+    "oid": "sha256:680467d4219daf29f9211930221b533193591b5d2ca15ff4dbd79cd78203350e",
+    "bytes": 14903
+  },
+  {
+    "path": "data/.lfs/sf_office_stairs.db.tar.gz",
+    "oid": "sha256:f75fbd4396d6eeaee6601d74ad69b2d80abe6943aa7b1bcc2962908a66a97b16",
+    "bytes": 4572059329
+  },
+  {
+    "path": "data/.lfs/smooth_occupied.png.tar.gz",
+    "oid": "sha256:44c8988b8a7d954ee26a0a5f195b961c62bbdb251b540df6b4d67cd85a72e5ac",
+    "bytes": 3511
+  },
+  {
+    "path": "data/.lfs/spot_small_loop.db.tar.gz",
+    "oid": "sha256:1b7105f0383f50a66ceea1be4cc669b3c2dc8cc348a3f56a0ee4265228644f1c",
+    "bytes": 4408200570
+  },
+  {
+    "path": "data/.lfs/three_paths.npy.tar.gz",
+    "oid": "sha256:ba849a6b648ccc9ed4987bbe985ee164dd9ad0324895076baa9f86196b2a0d5f",
+    "bytes": 5180
+  },
+  {
+    "path": "data/.lfs/three_paths.ply.tar.gz",
+    "oid": "sha256:639093004355c1ba796c668cd43476dfcabff137ca0bb430ace07730cc512f0e",
+    "bytes": 307187
+  },
+  {
+    "path": "data/.lfs/three_paths.png.tar.gz",
+    "oid": "sha256:2265ddd76bfb70e7ac44f2158dc0d16e0df264095b0f45a77f95eb85c529d935",
+    "bytes": 2559
+  },
+  {
+    "path": "data/.lfs/unitree_go2_bigoffice.tar.gz",
+    "oid": "sha256:3a009674153f7ee1f98219af69dc7a92d063f2581bfd9b0aa019762c9235895c",
+    "bytes": 2312982327
+  },
+  {
+    "path": "data/.lfs/unitree_go2_bigoffice_map.pickle.tar.gz",
+    "oid": "sha256:68adb344ae040c3f94d61dd058beb39cc2811c4ae8328f678bc2ba761c504eb5",
+    "bytes": 2331189
+  },
+  {
+    "path": "data/.lfs/unitree_go2_lidar_corrected.tar.gz",
+    "oid": "sha256:51a817f2b5664c9e2f2856293db242e030f0edce276e21da0edc2821d947aad2",
+    "bytes": 1212727745
+  },
+  {
+    "path": "data/.lfs/unitree_go2_office_walk2.tar.gz",
+    "oid": "sha256:d208cdf537ad01eed2068a4665e454ed30b30894bd9b35c14b4056712faeef5d",
+    "bytes": 1693876005
+  },
+  {
+    "path": "data/.lfs/unitree_office_walk.tar.gz",
+    "oid": "sha256:bee487130eb662bca73c7d84f14eaea091bd6d7c3f1bfd5173babf660947bdec",
+    "bytes": 553620791
+  },
+  {
+    "path": "data/.lfs/unitree_raw_webrtc_replay.tar.gz",
+    "oid": "sha256:a02c622cfee712002afc097825ab5e963071471c3445a20a004ef3532cf59888",
+    "bytes": 756280504
+  },
+  {
+    "path": "data/.lfs/video.tar.gz",
+    "oid": "sha256:530d2132ef84df228af776bd2a2ef387a31858c63ea21c94fb49c7e579b366c0",
+    "bytes": 4322822
+  },
+  {
+    "path": "data/.lfs/visualize_occupancy_rainbow.png.tar.gz",
+    "oid": "sha256:3dc1e3b6519f7d7ff25b16c3124ee447f02857eeb3eb20930cdab95464b1f0a3",
+    "bytes": 11582
+  },
+  {
+    "path": "data/.lfs/visualize_occupancy_turbo.png.tar.gz",
+    "oid": "sha256:c21874bab6ec7cd9692d2b1e67498ddfff3c832ec992e9552fee17093759b270",
+    "bytes": 18593
+  },
+  {
+    "path": "data/.lfs/xarm6.tar.gz",
+    "oid": "sha256:241d1034e41917f5f439195956e2584a1ddffdb384f8633c88b8a8b8500f1838",
+    "bytes": 1862255
+  },
+  {
+    "path": "data/.lfs/xarm6_worldbelief_realsense_d435i_stationery_calibrated.tar.gz",
+    "oid": "sha256:05acc218484d7f2b8e4f1688962df90ef37a95f6dc02d5d0c15d308cfa47ed95",
+    "bytes": 1354895310
+  },
+  {
+    "path": "data/.lfs/xarm7.tar.gz",
+    "oid": "sha256:0471bf646060a06170d05aeaeffa55b96164601c46cb102d23985d5d5ac44b38",
+    "bytes": 1605462
+  },
+  {
+    "path": "data/.lfs/xarm_grasp_sim.tar.gz",
+    "oid": "sha256:3df2ec2eb76c1e5c91e6473aea6ee61626eed1cf42b7b17df18588f67fcfe831",
+    "bytes": 2298253
+  },
+  {
+    "path": "data/.lfs/yam_description.tar.gz",
+    "oid": "sha256:db9a2160e414830eb1c2203b573ec7557563d3f963667c19752d7da7e3e940f1",
+    "bytes": 5388932
+  },
+  {
+    "path": "data/.lfs/zed_office_hd.tar.gz",
+    "oid": "sha256:0f4f61e54d9ed1f3c5ec78404238ccca6ea10f6ca7b3b054c89f9d06e7c7a361",
+    "bytes": 4188688205
+  },
+  {
+    "path": "dimos/mapping/cli/assets/fastlio_lidar.png",
+    "oid": "sha256:dc654b1c5837615fc14c0097f468c2337dcd17722ac41895081daf392666e62e",
+    "bytes": 3000691
+  },
+  {
+    "path": "dimos/mapping/cli/assets/go2_lidar.png",
+    "oid": "sha256:816287e864438b4eb951df649685db66cac7b278a8d95f5326459e6bdca78ab9",
+    "bytes": 1589502
+  },
+  {
+    "path": "dimos/mapping/cli/assets/markers_fastlio.png",
+    "oid": "sha256:79045486d46148c44718bb2eaf000dfc12cf421c4db4762ffaaf12011f36e2a7",
+    "bytes": 3320057
+  },
+  {
+    "path": "dimos/mapping/cli/assets/markers_go2.png",
+    "oid": "sha256:5c007ae1b46039d008620feee867e512fb81d4d39f9b3f712a380fe15e007692",
+    "bytes": 2260861
+  },
+  {
+    "path": "docs/capabilities/memory/assets/all_images.png",
+    "oid": "sha256:a873f01d1d9cf853cbadff9f63c49310817c126ca2249c165f857084227058b7",
+    "bytes": 7355457
+  },
+  {
+    "path": "docs/capabilities/memory/assets/brightness.svg",
+    "oid": "sha256:63326c90b24715c412947e4a7653849dcf2f19f20dbcbdd7270cdcea72ae741a",
+    "bytes": 333195
+  },
+  {
+    "path": "docs/capabilities/memory/assets/color_image.svg",
+    "oid": "sha256:47f6fc1ce3a58119f9635156786527b06dc2a4c3e5002a18b9916d2fb8a4e6af",
+    "bytes": 828420
+  },
+  {
+    "path": "docs/capabilities/memory/assets/embedding.svg",
+    "oid": "sha256:3cca31313aee2b026115deb8da50f281f9181967dfce552fd00e17b6fca8f006",
+    "bytes": 210859
+  },
+  {
+    "path": "docs/capabilities/memory/assets/embedding_focused.svg",
+    "oid": "sha256:30d31ccafa4919160730f93dfa7a4ffdb023cff38ca47e7e64696ddb3ecfece5",
+    "bytes": 34613
+  },
+  {
+    "path": "docs/capabilities/memory/assets/grid.png",
+    "oid": "sha256:3bf4f65c7e595535d7c42f9ca471b29f765341e3abe6f15915f077d9658d1146",
+    "bytes": 1858624
+  },
+  {
+    "path": "docs/capabilities/memory/assets/peak_detections.svg",
+    "oid": "sha256:a348f6d419248cc47fa75cd08a100e7808460318674d9e3d73a69ffdbb12ac00",
+    "bytes": 35218
+  },
+  {
+    "path": "docs/capabilities/memory/assets/peak_space.svg",
+    "oid": "sha256:84a19a7457bee795118741147e909a388c8fa05219f50394c333a17c27a0633f",
+    "bytes": 33163
+  },
+  {
+    "path": "docs/capabilities/memory/assets/plants.png",
+    "oid": "sha256:4732b965e06e47aa9b1f8e8cfdca4aa859832442719f46c9a7d77b5e202dcfc4",
+    "bytes": 173223
+  },
+  {
+    "path": "docs/capabilities/memory/assets/plants_auto.png",
+    "oid": "sha256:744d9661017781864661621af6aab25625408b602b84a5eec228ada445587d59",
+    "bytes": 1011358
+  },
+  {
+    "path": "docs/capabilities/memory/assets/plants_meaningful.png",
+    "oid": "sha256:02a9b707e75f17b9557f004f77a578d2a3010f6402d609dcfd5985da9082e490",
+    "bytes": 132383
+  },
+  {
+    "path": "docs/capabilities/memory/assets/plants_peak_detections.png",
+    "oid": "sha256:cc9fcf23e5b72e4d0005e54487d52860460662c82a08a9d9582286349016d98c",
+    "bytes": 1564191
+  },
+  {
+    "path": "docs/capabilities/memory/assets/plot_brightness_algo.svg",
+    "oid": "sha256:c738e3425aded30ed0c0af864837d6a6a526c4abf9655e426b9cc96eeed10520",
+    "bytes": 80187
+  },
+  {
+    "path": "docs/capabilities/memory/assets/plot_brightness_algo_delta.svg",
+    "oid": "sha256:5032a62e9891e849a568389b1be253c895ee399fec3f6010e0339bfd6faee5e5",
+    "bytes": 35161
+  },
+  {
+    "path": "docs/capabilities/memory/assets/plot_colors.svg",
+    "oid": "sha256:9c4b58c581bcd0431a78db17f476794317554f8314f1a052d4e12b3eaac0a381",
+    "bytes": 78847
+  },
+  {
+    "path": "docs/capabilities/memory/assets/plot_named.svg",
+    "oid": "sha256:6f3cef80bf0f8fd3dd20f836e9e92eb3f8e3308e1c2762a7d8b590ed85de2ffb",
+    "bytes": 32093
+  },
+  {
+    "path": "docs/capabilities/memory/assets/plot_plantness.svg",
+    "oid": "sha256:409ca0cf345bc0216e48555e7e8f591fe29c331544242f8b81c23dd9bfd584d7",
+    "bytes": 29340
+  },
+  {
+    "path": "docs/capabilities/memory/assets/plot_plantness_autopeaks.svg",
+    "oid": "sha256:2502a08c864b23ba933adc4cd06a721f4d0aaa0631e6b73d346c7fa5d7ad5965",
+    "bytes": 32085
+  },
+  {
+    "path": "docs/capabilities/memory/assets/plot_plantness_autopeaks2.svg",
+    "oid": "sha256:660595c2d7bf72df91c62a22f4f7a9ff42274debbf21a2d62047d389ede5b4e5",
+    "bytes": 35079
+  },
+  {
+    "path": "docs/capabilities/memory/assets/plot_plantness_autopeaks_map.svg",
+    "oid": "sha256:6b12efec7d3caa5390b5d8f6995e61fe82fb8e8a768a7906b21a55bb1fe0e80b",
+    "bytes": 66539
+  },
+  {
+    "path": "docs/capabilities/memory/assets/plot_plantness_brightness.svg",
+    "oid": "sha256:7394cbb94cb0b6a2173e168e12b9198fda7ef0fc9588136ba1d6c61ec3a6d808",
+    "bytes": 49768
+  },
+  {
+    "path": "docs/capabilities/memory/assets/plot_plantness_gap_fill.svg",
+    "oid": "sha256:72ee13b7fd0aaafc89381235c3038d5226c8060701565ed41d6ef65a5563dbc6",
+    "bytes": 29863
+  },
+  {
+    "path": "docs/capabilities/memory/assets/plot_plantness_marked.svg",
+    "oid": "sha256:c09717f67461b9b1424a68244f20a7c954368a048370c146b4038a4908dccf31",
+    "bytes": 29818
+  },
+  {
+    "path": "docs/capabilities/memory/assets/plot_plantness_significant.svg",
+    "oid": "sha256:5039f3ae678ef9c5986d1e93d54b12cc1d268278b2bd8037e02c11ea7f7848ce",
+    "bytes": 29491
+  },
+  {
+    "path": "docs/capabilities/memory/assets/plot_robot_data.svg",
+    "oid": "sha256:418e2f1dc4cba7938e28b0e54ccd7714eb6e22830412c269a4b708ff2d9b36fe",
+    "bytes": 108729
+  },
+  {
+    "path": "docs/capabilities/memory/assets/speed.svg",
+    "oid": "sha256:683d4d7411149ba1c918976beaeebbc62ae69a1a4ba99ee61f53ee42572612b8",
+    "bytes": 828255
+  },
+  {
+    "path": "docs/capabilities/navigation/assets/1-lidar.png",
+    "oid": "sha256:2d76742ada18d20dc0e3a3be04159d3412e7df6acee8596ff37916f0f269d3e0",
+    "bytes": 597386
+  },
+  {
+    "path": "docs/capabilities/navigation/assets/2-globalmap.png",
+    "oid": "sha256:bc2f27ec2dcc4048acde6b53229c7596b3a7f6ed6afad30c4cd062cf5751bd24",
+    "bytes": 1104485
+  },
+  {
+    "path": "docs/capabilities/navigation/assets/3-globalcostmap.png",
+    "oid": "sha256:d1f9e6c142b220f1a4be7b08950f628a2d34e26caba8a1f5c100726bec6c88ef",
+    "bytes": 793366
+  },
+  {
+    "path": "docs/capabilities/navigation/assets/4-navcostmap.png",
+    "oid": "sha256:9ee4332e3d92162ddf41a0137c2ab5b6a885d758aa5a27037e413cdd4d946436",
+    "bytes": 741912
+  },
+  {
+    "path": "docs/capabilities/navigation/assets/5-all.png",
+    "oid": "sha256:1a777d315beac6f4773adcb5c27384fd983720083941b4f62060958ddf6c16d2",
+    "bytes": 1209867
+  },
+  {
+    "path": "docs/capabilities/navigation/assets/coverage.png",
+    "oid": "sha256:7c5ef9943e14c2d02fa2e19032ffeb2fc79f927c903e552e7c0db01b858f5297",
+    "bytes": 256502
+  },
+  {
+    "path": "docs/capabilities/navigation/assets/frontier.png",
+    "oid": "sha256:1f2e35b3a6cc1e82667958f6bb3120a5f0bb5bba99f156df7283b774559168b5",
+    "bytes": 251903
+  },
+  {
+    "path": "docs/capabilities/navigation/assets/global_shutter.png",
+    "oid": "sha256:1a9f8e61fe5a085663df37f18528dd9460452ff219c8f8063409278a0bcc536f",
+    "bytes": 1185
+  },
+  {
+    "path": "docs/capabilities/navigation/assets/noros_nav.gif",
+    "oid": "sha256:60f842cd2fda539338443b3c501197fbb875f5c5f3883ba3ffdd17005e9bd786",
+    "bytes": 612786
+  },
+  {
+    "path": "docs/capabilities/navigation/assets/patrol_path.png",
+    "oid": "sha256:0cecf773affedca3d14d781e956d20ec9b396df53b5473e41fb7a182d700bef2",
+    "bytes": 476239
+  },
+  {
+    "path": "docs/capabilities/navigation/assets/random.png",
+    "oid": "sha256:18ab48a549d02d1cd63c8c21b4294acc9c235e8c8f704e2c6ee71d0399ca4aa0",
+    "bytes": 260526
+  },
+  {
+    "path": "docs/capabilities/navigation/assets/rolling_shutter.png",
+    "oid": "sha256:0faf2c5c9604cdd4414c2f8f818ed3bd482d1bfd93664a0542424efbf5958967",
+    "bytes": 1698
+  },
+  {
+    "path": "docs/capabilities/teleoperation/assets/latency_four_continents.png",
+    "oid": "sha256:9f2a3590f067c07d2f1da89790d6ae8d182431d0cca5c76ea7d887d8e609a320",
+    "bytes": 181257
+  },
+  {
+    "path": "docs/platforms/safety/assets/r1pro-overview.png",
+    "oid": "sha256:4ecd80770ce5cd619aae51c34933422850b2b0ba590cd6f4e926b3661387ac46",
+    "bytes": 88067
+  },
+  {
+    "path": "docs/platforms/safety/assets/r1pro-remote-modes.png",
+    "oid": "sha256:54d1957af82e403e5240e4672d4e2d6573ac85ac1f40f155b7fefcc76711446c",
+    "bytes": 10789
+  },
+  {
+    "path": "docs/platforms/safety/assets/r1pro-remote.png",
+    "oid": "sha256:3dfdaf36fa96f21bb7a5eea9178a9e983e0ec4461437784008ce28ae4bc40e6d",
+    "bytes": 376576
+  },
+  {
+    "path": "docs/platforms/safety/assets/r1pro-switches.png",
+    "oid": "sha256:d8cf82d51ff97f0e7cf50e7f3b60802593ddbf9ef2cc6882593dee51c3d20003",
+    "bytes": 125943
+  },
+  {
+    "path": "docs/usage/assets/lcmspy.png",
+    "oid": "sha256:91da9ef9f7797cce332da448739e28591f7ecfc0fd674e8b4be973cf28331438",
+    "bytes": 7118
+  },
+  {
+    "path": "docs/usage/assets/pubsub_benchmark.png",
+    "oid": "sha256:728484a4358df18ced7b5763a88a962701c2b02b5d319eb9a8b28c6c72d009fe",
+    "bytes": 23946
+  },
+  {
+    "path": "docs/usage/assets/transforms.png",
+    "oid": "sha256:6597e0008197902e321a3ad3dfb1e838f860fa7ca1277c369ed6ff7da8bf757d",
+    "bytes": 101102
+  },
+  {
+    "path": "docs/usage/data_streams/assets/alignment_timeline.png",
+    "oid": "sha256:cfea5a6aac40182b25decb9ddaeb387ed97a7708e2c51a48f47453c8df7adf57",
+    "bytes": 16136
+  },
+  {
+    "path": "docs/usage/data_streams/assets/alignment_timeline2.png",
+    "oid": "sha256:22b64923637d05f8f40c9f7c0f0597ee894dc4f31a0f10674aeb809101b54765",
+    "bytes": 23471
+  },
+  {
+    "path": "docs/usage/data_streams/assets/alignment_timeline3.png",
+    "oid": "sha256:b8e9589dcd5308f511a2ec7d41bd36978204ccfe1441907bd139029b0489d605",
+    "bytes": 9969
+  },
+  {
+    "path": "docs/usage/data_streams/assets/frame_mosaic.jpg",
+    "oid": "sha256:e83934e1179651fbca6c9b62cceb7425d1b2f0e8da18a63d4d95bcb4e6ac33ca",
+    "bytes": 88206
+  },
+  {
+    "path": "docs/usage/data_streams/assets/frame_mosaic2.jpg",
+    "oid": "sha256:2d73f683e92fda39bac9d1bb840f1fc375c821b4099714829e81f3e739f4d602",
+    "bytes": 91036
+  },
+  {
+    "path": "docs/web/assets/cockpit_channels.png",
+    "oid": "sha256:a64e6681319c94b38c357b00bfbc9454440c1de913c27d11022fd081848a4ce2",
+    "bytes": 46419
+  },
+  {
+    "path": "docs/web/assets/cockpit_grid.png",
+    "oid": "sha256:160c57c9d33853c6486e30edc843c04009d55a40009aa5ccacb65a8cf8db7132",
+    "bytes": 705299
+  },
+  {
+    "path": "docs/web/assets/cockpit_header.png",
+    "oid": "sha256:039c119dc007a33000320ea38a51bd531f57ec621d5c58f454bb8aac5bab9f0b",
+    "bytes": 5059
+  },
+  {
+    "path": "examples/language-interop/assets/lcmspy.png",
+    "oid": "sha256:87d3af9d9105d048c3e55faff52981c15cc1bfd8168c58a3d8c8f603aa8b7769",
+    "bytes": 5110
+  },
+  {
+    "path": "misc/DimSim/public/embodiment/dimsim_unitree_stub.glb",
+    "oid": "sha256:761813170c01429ab9215ad4e37b95a768437fc0c6aa1d643f5938a672263322",
+    "bytes": 55746312
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/arc-floor-lamp/state-default.glb",
+    "oid": "sha256:c4ef00b2304b405746f09f6bd6b35c9981937366a70d64f087a19d9f9b17a5d2",
+    "bytes": 585968
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/arc-floor-lamp/state-mlskixi4-xebf.glb",
+    "oid": "sha256:c4ef00b2304b405746f09f6bd6b35c9981937366a70d64f087a19d9f9b17a5d2",
+    "bytes": 585968
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/art-deco-gold-finished-bar-cart-with-two-glass-s/state-default.glb",
+    "oid": "sha256:e7ac100213ae3170bd8097c0264c43e08a38724d9c5cd46311be544000df1791",
+    "bytes": 147548
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/assorted-decorative-plants/state-default.glb",
+    "oid": "sha256:68ea9331c2464dcb36f042e670bd7f1c3b8125ff11b4c50cae133871691327e9",
+    "bytes": 906376
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/automatic-drip-coffee-maker-with-glass-carafe-i/state-default.glb",
+    "oid": "sha256:f44258a94a8909d82c67dd688ce8e0366f2912b36f7c0f7871bc50bd4dde26f1",
+    "bytes": 223808
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/bathroom-vanity-and-sink/state-default.glb",
+    "oid": "sha256:aee4db9810e0e5cdb842a4b227cb6aa06b08ca63193acb6b2f060df2f0847453",
+    "bytes": 187992
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/bedside-table/state-default.glb",
+    "oid": "sha256:ec847525d25bb8e2391c0b2eb4edf29c3a3e123af71cc1f52fd9993be0f3f31f",
+    "bytes": 7144640
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/bedside-table/state-mlsm2hfh-kpff.glb",
+    "oid": "sha256:220267491822f796fe71cfd731c48d501428fb57389758f9423f65c0bf08d160",
+    "bytes": 7151960
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/bohemian-style-woven-macrame/state-default.glb",
+    "oid": "sha256:84be0236520a9fa691211c7a7e50c84b33429adf046d5329f49c5f6aaee23b67",
+    "bytes": 313152
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/books/state-default.glb",
+    "oid": "sha256:89ce9649c4c0567cebb1288a953c8c0428087c49bc75bea6af9cd6f7e28848bd",
+    "bytes": 284300
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/bookshelf-decor/state-default.glb",
+    "oid": "sha256:762b4c306db409a42ddda0e771d94f5876686529a3e16111f1346d1d5666ed33",
+    "bytes": 1082604
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/built-in-stainless-steel-dishwasher/state-default.glb",
+    "oid": "sha256:82447bc193e1f8c3f6e7378e0241d9ac15b155ddf19a1371666c270a9341d49b",
+    "bytes": 22280
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/chunky-knit-wool-throw-blanket-with-visible-weav/state-default.glb",
+    "oid": "sha256:4658bd699a5c33748530135b3cf64006373143400fac2a452e72d94f1de84b33",
+    "bytes": 463872
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/classic-outdoor-garden-bench/state-default.glb",
+    "oid": "sha256:514dbc4065f956284818b30a9c280fe8f2ed19eea675d140ad058b71895ca428",
+    "bytes": 56032
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/console-with-cabinets/state-default.glb",
+    "oid": "sha256:f0a0fa0fff9eb80fc2c5d1b2c8a61be3f84dd24cdbc691831da13faee3712e46",
+    "bytes": 7297816
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/console-with-cabinets/state-mlsncwfv-pq43.glb",
+    "oid": "sha256:5894a964cec58a60cfb89deaa12426816271d8aef1e73208f6b52df81d4d9a80",
+    "bytes": 7300400
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/contemporary-white-ceramic-toilet-with-sleek-lin/state-default.glb",
+    "oid": "sha256:a63bd446c2343599d7576cf40718966fb67135ba5227b98e7bfb57b2967fd3b0",
+    "bytes": 387040
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/detailed-porcelain-dinner-plate-with-gold-rim-an/state-default.glb",
+    "oid": "sha256:e2981caa6d6c2ad8ceb54b7a625103065a16d5a9cbfec4b1eb59eb9d04b994bd",
+    "bytes": 328560
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/dining-chair/state-default.glb",
+    "oid": "sha256:332fd1cf6db3b245f2fa29d3d853a0afb8a007826e63a56e4500829a6b25e816",
+    "bytes": 8170956
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/framed-abstract-oil-painting/state-default.glb",
+    "oid": "sha256:c03169172ec1d9384b911cf3ebf7c289af0b0e3038062ca0440e098b4463fc6c",
+    "bytes": 1426496
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/framed-landscape-oil-painting/state-default.glb",
+    "oid": "sha256:becc877432db5a547ad6875b2d996203d83a2fb58b4ec0c6bbdd0b93bde8e65d",
+    "bytes": 7961960
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/freestanding-oval-soaking-bathtub-with-chrome-fl/state-default.glb",
+    "oid": "sha256:87b3275bf150a91549829458a45fb566c4012a012916d5e16e6b71628940b273",
+    "bytes": 87080
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/freestanding-oval-soaking-bathtub-with-chrome-fl/state-mlsiig1y-6e45.glb",
+    "oid": "sha256:00164bacaaeb97a03fb1350783fc9bd94d84d3e346ba3d97bd9782bcd5e52e32",
+    "bytes": 87132
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/galvanized-steel-watering-can-with-a-long-spout/state-default.glb",
+    "oid": "sha256:dd5c886eb576b8d06b330558e7f4f1d9ccee7f1f8b93cae4aee477b230a9ac38",
+    "bytes": 340556
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/hardcover-book-lying-open-with-paper-pages-and-p/state-default.glb",
+    "oid": "sha256:d3c3ff196eb5b512e22dd42951f05c9d1de304dab8842a67f5fe87e1fec5ea0d",
+    "bytes": 290324
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/hardcover-books-1/state-default.glb",
+    "oid": "sha256:809728c182a237caf91b109b77f82c0475c74f31dcb35925feaceb830c58dbe9",
+    "bytes": 743840
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/hardcover-books/state-default.glb",
+    "oid": "sha256:1f1324e5e42bb08edf674d1e0451c231bec5ab531528f481bcae291f628c8a9c",
+    "bytes": 562212
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/high-speed-kitchen-blender-with-glass-jar-and-me/state-default.glb",
+    "oid": "sha256:3b8a948b157b1c561c6cedd96a007030a2d619b92a5b0f3ebf9f65ddbb481bf4",
+    "bytes": 434196
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/kitchen-base-cabinet/state-default.glb",
+    "oid": "sha256:19ee47ea1a85533b4a93e56d2a7002ce1520bc6f9847aa13c95beb89bc5e72e5",
+    "bytes": 29416
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/kitchen-base-cabinet/state-mlsr95pw-kpf4.glb",
+    "oid": "sha256:c7c1bcd453cd17747720552688f390ffd6fb3000c0eee9ec1e1cd6e18c0aaf19",
+    "bytes": 36348
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/kitchen-wall-cabinet/state-default.glb",
+    "oid": "sha256:b0a21a9216f29dd005250b020ba188f82e886b3862957d5f73a5859c18ca2c9c",
+    "bytes": 28620
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/laptop-open/state-default.glb",
+    "oid": "sha256:72c2c85e8b32fb9fa91c4ca28b4424ae21ac46fb6b3989c65ccc5e0948cd04c1",
+    "bytes": 840568
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/large-detailed-oak-tree-with-textured-bark-and-l/state-default.glb",
+    "oid": "sha256:9201662dead3d7925f6ef0d1fe383842233590e8d5c36f735ffea0ba4b390d0d",
+    "bytes": 29917356
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/large-ornate-mahogany-dining-table/state-default.glb",
+    "oid": "sha256:7ad521d7b40fe9dd786256da2ef132c879af08d2223c71d41830b590aaf264af",
+    "bytes": 7381876
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/large-terracotta-garden-pots-with-intricate-flor/state-default.glb",
+    "oid": "sha256:fada31452d0b3d5c833df43ba78345d132e5df4b082a50f0d75440ea104f6b0e",
+    "bytes": 316788
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/large-wardrobe/state-default.glb",
+    "oid": "sha256:c20a8a18501baaf1a0cd8f6061eb5505ef1cb149a4fa37d522dd43eb4f0462a7",
+    "bytes": 7173296
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/large-wardrobe/state-mlsmklqi-mykf.glb",
+    "oid": "sha256:eca7d7650015f635e34cc38e692088dc5724372f7fda3cf98a3b0d857a5e7772",
+    "bytes": 7189268
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/light-oak-wooden-bed-tray-with-handles-and-short/state-default.glb",
+    "oid": "sha256:3c3bf58548ec8ab5fd698a3fd73104ae64dbeac124cd1806b72dc9e9493474be",
+    "bytes": 292404
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/luxury-rainfall-shower-head-and-wall-mounted-mix/state-default.glb",
+    "oid": "sha256:f004531170d3176448ad56a98f7d376e32669557fb4f4366c5bb6316aec45201",
+    "bytes": 392756
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/matching-ceramic-soap-dispenser-toothbrush-hold/state-default.glb",
+    "oid": "sha256:6d535dabf534509fe3e28452975aaa5ac01c6c7e06c7f65686a9f8b483166cde",
+    "bytes": 390684
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/matte-ceramic-coffee-mug-with-steam-and-realisti/state-default.glb",
+    "oid": "sha256:1f8198ef23fc9c4e2b8eee2ca7dfef585eba254db817ccc124b51e14a97d7cb9",
+    "bytes": 67604
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/minimalist-floating-wooden-wall-shelves-for-bath/state-default.glb",
+    "oid": "sha256:3c372327111290d8e3039ae7214469fa7ca608fa82fa25014d2739bc6964e5dd",
+    "bytes": 338516
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/modern-cordless-electric-kettle-with-brushed-met/state-default.glb",
+    "oid": "sha256:b6978435381bfb06cb50f5240e3826e7654ddd3d4ae5798224fb8bb35773a58d",
+    "bytes": 402256
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/modern-l-shaped-sectional/state-default.glb",
+    "oid": "sha256:c90d01cd485a76c111f479f0adf98edafb94ed9de8412e1a1648366d398f6cb7",
+    "bytes": 1237140
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/modern-office-work-desk/state-default.glb",
+    "oid": "sha256:e8a0531a082830ed5ae7944298a08d06522ae16e5be4fc4d2297672dcda6580d",
+    "bytes": 7261060
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/modern-tripod-floor-lamp/state-default.glb",
+    "oid": "sha256:5120ee40ab6e16d691bec8df9a1706c342667de183b14eb39d9194c2f9ce5a10",
+    "bytes": 587672
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/modern-tripod-floor-lamp/state-mlrpcv6c-bdvt.glb",
+    "oid": "sha256:9c87c9326473786effe27a9c42a3bbe3ac91b495a38de05b2936c907fbc11f50",
+    "bytes": 587716
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/neon-light-wall-art/state-default.glb",
+    "oid": "sha256:d7e5c1efd9d82139f895d0f45138d04b112750b9769e609aa1380c573905dd12",
+    "bytes": 30864
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/pair-of-plush-white-bed-pillows-with-cotton-text/state-default.glb",
+    "oid": "sha256:7cabb071524c75b9f5127e72b2eb0734a25c99c3b6abe2fb5715a40027b87715",
+    "bytes": 471560
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/polished-chrome-wall-mounted-towel-rack-with-fol/state-default.glb",
+    "oid": "sha256:eecd13ed1d667181967fef1e0c5d91acfc0915d76bc7e0404b1bf2b30e849439",
+    "bytes": 514304
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/professional-gas-range/state-default.glb",
+    "oid": "sha256:d8109e458f1d0a27e9d393ae4977a64b6feba9cac916a610310232ec1e18b2c9",
+    "bytes": 121688
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/professional-gas-range/state-mlssjm1p-xotl.glb",
+    "oid": "sha256:dfebe1e8414475946e88dc2beeb162259b0a546582a9788fb897e7161ef13094",
+    "bytes": 130176
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/professional-gas-range/state-mlsskac7-ywao.glb",
+    "oid": "sha256:03040168b854d3a5daaa057f3d0ff616a0258b133365594ab77dcfdfb82d2cd3",
+    "bytes": 121688
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/professional-gas-range/state-mlssl1do-1yyl.glb",
+    "oid": "sha256:15cfb6492ed1b20d6d3db50c83c17cca3a8cacf91eaf10220b9bd890100f589c",
+    "bytes": 121736
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/queen-size-bed/state-default.glb",
+    "oid": "sha256:b4d911f624cded8e69086cedfbeedff25e92eaf8532bee7e69acc05e50973b5d",
+    "bytes": 9431752
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/refrigerator/state-default.glb",
+    "oid": "sha256:e48c5600a1aa5cf3ac9878135051cf9f14ae4cb73d48281964c2a30c40f8fa5d",
+    "bytes": 49068
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/refrigerator/state-mlsqs928-jonu.glb",
+    "oid": "sha256:2a7aba2a1d9b35334833240e84c88960bbb81e4f99dd9b114c2ca7dacce82101",
+    "bytes": 70212
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/salt-and-pepper-shakers/state-default.glb",
+    "oid": "sha256:80d34c58c3291423efd924ac68e106fcb1f1065243f3ac1f3e670b01a6855a69",
+    "bytes": 612636
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/set-of-three-canvas-prints-featuring-detailed-bo/state-default.glb",
+    "oid": "sha256:89f68d3fb22840bac269f57bee966a1b1d0e846befa4f2cc6a1ed966e1606d51",
+    "bytes": 818456
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/sink/state-default.glb",
+    "oid": "sha256:2d8f9552fc6c3f80aa7552b0e04d44541dedef1ce2ef60ccc5579bafd8fdb156",
+    "bytes": 83804
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/sleek-countertop-microwave-oven-with-digital-dis/state-default.glb",
+    "oid": "sha256:9cc288a2c972526327ec8e7b0bc6562415ecc848b925d86c69b9cc13200dcbbb",
+    "bytes": 420836
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/small-potted-plant/state-default.glb",
+    "oid": "sha256:24fd6882ffcaae0f165c01fd64d95ee3937c0e93fd819af98aefaf0f8a0c5268",
+    "bytes": 303104
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/soft-fuzzy-stuffed-teddy-bear-with-button-eyes-a/state-default.glb",
+    "oid": "sha256:000e1d838c92196895931bcee3f01bf6543abdb90e31c6339c069765fb0d48bb",
+    "bytes": 522336
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/stainless-steel-cutlery-set/state-default.glb",
+    "oid": "sha256:1bd120f6e539d9b8abafb49944da66eedf09bb48acefc9d0d3101030fcbd5407",
+    "bytes": 877620
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/television/state-mlr4bgf0-u7gv.glb",
+    "oid": "sha256:613f4a3ad1cf067e613b8117e4ce1388ab1e5f7ecb829cd29195010a07479fb1",
+    "bytes": 12224
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/television/state-mlr4dvjl-fyw3.glb",
+    "oid": "sha256:046becfcfc027861349c1ffc356cd3eaf83bf3726f05453f90b1b9b5d28ab871",
+    "bytes": 660476
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/thick-quilted-duvet-neatly-folded-with-soft-fabr/state-default.glb",
+    "oid": "sha256:b312be7201ac8833e1bd5d85679dd4cd420703293ce4d6895640a54b71ffe2cc",
+    "bytes": 464536
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/thin-glass-and-metal-smartphone-with-reflective/state-default.glb",
+    "oid": "sha256:9bad5b56ef44fc955ff40c968a0a6f094557ae0ab2f8373696c44a63c22eb21a",
+    "bytes": 466028
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/two-slice-chrome-toaster-with-browning-control-d/state-default.glb",
+    "oid": "sha256:a56148c04372525971900d49f8d182193d2656427fda6da240f450e9e9ca9fed",
+    "bytes": 141696
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/vintage-poster/state-default.glb",
+    "oid": "sha256:084c6f0c20440e05a5b8812faaac3b899bdb6cb8ee1b7820f49d850f02cd6f09",
+    "bytes": 151300
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/wall-clock/state-default.glb",
+    "oid": "sha256:5477e7fae01230e75880560cf89c197859739403b7740f9d4eb5c810beee49ff",
+    "bytes": 59196
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/wall-mirror/state-default.glb",
+    "oid": "sha256:903c82b9c38f1855eda06867f4002e0db9aacfc715a0d27ab8f22baf2b8ee4ba",
+    "bytes": 154116
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/wall-mounted-medicine-cabinet-with-a-large-mirro/state-default.glb",
+    "oid": "sha256:ca773d8aa40e2d11f105401140ec7c8a7a62e7efde70abeb85ff394d31f40734",
+    "bytes": 18044
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/wall-mounted-stainless-steel-chimney-range-hood/state-default.glb",
+    "oid": "sha256:49f50c5fa351fc3eb37f75ccbc0def6503b87c6d9de193307d98afc8e8f8494c",
+    "bytes": 155312
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/wine-glass/state-default.glb",
+    "oid": "sha256:6fe7aa25d676188b282aebaf26bb83c80847681229023b8c3f86387f64bb5332",
+    "bytes": 26092
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/wine-glass/state-mlrogc5m-n4t3.glb",
+    "oid": "sha256:762815672b79d4db9364d5d0c65e47f2062606131cf50a8e944231f99bc6c40f",
+    "bytes": 34824
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/wooden-bookcase/state-default.glb",
+    "oid": "sha256:23d924aefb491eb99f8e307b3c019dbd014a3c2afe8e20bbf1c3801a92598bee",
+    "bytes": 7149216
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/wooden-coffee-table-with-glass-top/state-default.glb",
+    "oid": "sha256:e94ca898907df260f15dfa16e06a74b171de86d4d2b35562305714f95a2a023c",
+    "bytes": 8081160
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/work-chair/state-mlrqdudw-h1ax.glb",
+    "oid": "sha256:c412550dbdca13a9156bb80c7ad84aa38053518c50c69f4d91a1c387b3883a81",
+    "bytes": 1462112
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/woven-rattan-placemat/state-default.glb",
+    "oid": "sha256:5d06b94922c52ff1bcc4de4c62c9a48558e4a26af147ad7e59157cac1d7d2b25",
+    "bytes": 285780
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/objects/woven-wicker-laundry-hamper-with-a-fabric-liner/state-default.glb",
+    "oid": "sha256:652a0d297f197925de9cd3861e94185c03ae2f317033b5da01b59a85cc3c6c93",
+    "bytes": 563716
+  },
+  {
+    "path": "misc/DimSim/scenes/apartment/structure.glb",
+    "oid": "sha256:5d1d4ae848c8d6378e1f6a03aba55dfeeb47a6b42010be065ed93c76a6ba3736",
+    "bytes": 5800704
+  }
+]

@@ -1,0 +1,455 @@
+// The DimOS relay: QUIC/WebTransport listener (robot + viewer sessions) plus
+// a plain-HTTP side (static files, /api/info, /api/stats). Payload-blind:
+// all forwarding decisions come from frame headers and robot manifests.
+// Session/transport handling lives in session.ts, registration + routing in
+// registry.ts; this file owns the listeners and process-level wiring.
+import { PROTOCOL_VERSION } from "@dimos/shared";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import type { Auth } from "./auth.ts";
+import { makeEphemeralCert } from "./cert.ts";
+import { CloudflareClient, type FetchFn, type RtcConfig } from "./cloudflare.ts";
+import { LATEST_STALE_MS } from "./forward.ts";
+import { Registry } from "./registry.ts";
+import { RtcHub } from "./rtc.ts";
+import { collectResetStreams, RobotSession, ViewerSession } from "./session.ts";
+
+export interface RelayOptions {
+  /**
+   * TCP port for the HTTP side (and, with cert/key, the QUIC port too).
+   * Default 7780; 0 picks an ephemeral port.
+   */
+  port?: number;
+  /** Bind host for both listeners. The default is the only secure-context-friendly choice. */
+  host?: string;
+  /**
+   * Built Cockpit app (web/cockpit/dist): / serves its index.html. Without it
+   * the relay has no UI (/ answers 404 with a build hint); only /api/* works.
+   */
+  cockpitDir?: string;
+  /** Built SDK bundle (web/sdk/dist): serves GET /sdk.js. */
+  sdkDir?: string;
+  /** User static root served at / instead of the cockpit (--serve-dir). */
+  serveDir?: string;
+  /**
+   * PEM certificate (chain) and private key (--cert/--key), both or neither.
+   * With them the relay terminates real TLS itself: HTTPS on `port`, QUIC on
+   * the same port, and no certificate hash advertised (clients verify the
+   * certificate normally). Without them: an ephemeral self-signed certificate
+   * pinned by hash, QUIC on an ephemeral port.
+   */
+  cert?: string;
+  key?: string;
+  /**
+   * Parsed --auth-file (auth.ts): robot keys bound to robot ids, viewer
+   * tokens, and topic source keys. Robots, viewers and topic providers must
+   * present them in hello, /api/stats needs a bearer viewer token, and
+   * together with cert/key it lifts the loopback-only rule below.
+   */
+  auth?: Auth;
+  /**
+   * Admit topic providers and give every viewer read/write access to every
+   * connected topic source (--open-topics). Default: on without `auth`, where
+   * nothing else is protected either; off with it, which turns providers away
+   * (`topics_disabled`) and denies viewers every topic operation.
+   */
+  openTopics?: boolean;
+  /**
+   * Parsed --rtc-file (cloudflare.ts): enables video.webrtc.v1 channels
+   * through the Cloudflare SFU. Does not lift the loopback-only rule below.
+   */
+  rtc?: RtcConfig;
+  /** Test seam. */
+  rtcFetch?: FetchFn;
+  /**
+   * quinn's congestion controller for every session (--congestion):
+   * "throughput" is Cubic, "low-latency" is BBR. Deno's default is Cubic,
+   * which on a lossy link (1% loss at 150 ms RTT) collapses to well under
+   * 1 Mbit/s; BBR keeps the rate up at the cost of filling the bottleneck
+   * queue and crowding out Cubic flows sharing it. An A/B knob until one
+   * wins in the field.
+   */
+  congestionControl?: "throughput" | "low-latency";
+  /**
+   * Explicit acknowledgment for binding a non-loopback host without cert,
+   * key, and auth. Such a relay trusts every origin that can reach it
+   * (wildcard CORS on the discovery endpoints, an unauthenticated
+   * WebTransport session), so startRelay refuses other hosts without this -
+   * only sensible behind the operator's own TLS and access control.
+   */
+  unsafeNonLoopback?: boolean;
+}
+
+export interface RelayHandle {
+  httpPort: number;
+  quicPort: number;
+  /** Base WebTransport URL (no path); clients append /robot or /viewer. */
+  wtUrl: string;
+  /** base64 SHA-256 of the ephemeral certificate; absent with cert/key. */
+  certHash?: string;
+  shutdown(): Promise<void>;
+}
+
+export const CERT_KEY_PAIR_ERROR = "--cert and --key must be given together";
+
+// Liveness. Each peer takes the smaller of the two idle timeouts, so this
+// bounds how long a dead peer's session (and a dead robot's id) lingers;
+// the bridge offers 10 s. Keepalives (quinn PINGs, from the Rust side, so a
+// busy event loop does not delay them) keep idle sessions alive well inside
+// it. Browsers and the SDK add an application ping on the control stream.
+export const MAX_IDLE_TIMEOUT_MS = 15_000;
+export const KEEP_ALIVE_INTERVAL_MS = 3_000;
+const EPHEMERAL_PORT_ATTEMPTS = 10;
+
+/** What the listeners serve: the ephemeral certificate or the operator's. */
+interface ServedCert {
+  certPem: string;
+  keyPem: string;
+  /** Hash pinned through /api/info; absent for a real certificate. */
+  certHashB64?: string;
+}
+
+const MIME: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  // Browsers enforce a JavaScript MIME type for module scripts, so .js and
+  // .mjs must both resolve to it or `<script type="module">` refuses them.
+  ".js": "application/javascript",
+  ".mjs": "application/javascript",
+  ".css": "text/css",
+  ".json": "application/json",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".txt": "text/plain; charset=utf-8",
+  ".ico": "image/x-icon",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".wasm": "application/wasm",
+  ".woff2": "font/woff2",
+  ".woff": "font/woff",
+};
+
+// Deliberate policy: any origin may read the discovery endpoint and import
+// served JavaScript modules (public data, public code), so a local page
+// (e.g. a Vite dev server) can bootstrap against a loopback relay and a
+// hosted relay's SDK works cross-origin. The viewer token is the access
+// boundary, not CORS; the one exception is /api/stats, which needs a bearer
+// token and carries no CORS header once auth is on.
+const LOCAL_CORS = { "access-control-allow-origin": "*" };
+
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
+
+function resolveDirUrl(dir: string, label: string): URL {
+  // Canonical (realPath) so serveFrom compares symlink-free paths (macOS /tmp
+  // is itself a symlink); href must end with "/" so new URL(name, root)
+  // resolves under it. Fail with a clear labeled error on a bad path: the
+  // raw NotFound is cryptic, and a plain file would "start" fine and then
+  // 404 every request.
+  let real: string;
+  try {
+    real = Deno.realPathSync(dir);
+  } catch {
+    throw new Error(`${label} does not exist: ${dir}`);
+  }
+  if (!Deno.statSync(real).isDirectory) {
+    throw new Error(`${label} is not a directory: ${dir}`);
+  }
+  return pathToFileURL(real.endsWith("/") ? real : real + "/");
+}
+
+/**
+ * Serve `name` from under `root` (canonical, via resolveDirUrl): a 400 for
+ * path traversal or symlink escape, null when the file does not exist
+ * (callers fall through to the next root or a 404).
+ */
+async function serveFrom(root: URL, name: string): Promise<Response | null> {
+  // Resolve the request to a real path and confirm it stays under the root. A
+  // leading "/" or "\" makes `new URL(name, root)` jump to the filesystem
+  // root; fileURLToPath additionally throws on encoded slashes.
+  let filePath: string;
+  try {
+    filePath = fileURLToPath(new URL(name, root));
+  } catch {
+    return new Response("bad path", { status: 400 });
+  }
+  const rootPath = fileURLToPath(root);
+  if (!filePath.startsWith(rootPath)) return new Response("bad path", { status: 400 });
+  // The lexical check cannot see symlinks: canonicalize (realPath follows
+  // them) and require the target to still be under the root, so a link
+  // inside a served tree cannot expose files outside it.
+  let realPath: string;
+  try {
+    realPath = await Deno.realPath(filePath);
+  } catch {
+    return null; // absent (or a dangling link)
+  }
+  if (!realPath.startsWith(rootPath)) return new Response("bad path", { status: 400 });
+  try {
+    const data = await Deno.readFile(realPath);
+    const ext = name.slice(name.lastIndexOf("."));
+    return new Response(data, {
+      headers: { "content-type": MIME[ext] ?? "application/octet-stream" },
+    });
+  } catch {
+    return null;
+  }
+}
+
+export function installUnhandledRejectionGuard(): void {
+  // deno#28406: WT sessions leak unhandled rejections on disconnect/idle
+  // timeout; without this guard the relay dies ~30 s after a tab closes.
+  if ((globalThis as { __dimosRejectionGuard?: boolean }).__dimosRejectionGuard) return;
+  (globalThis as { __dimosRejectionGuard?: boolean }).__dimosRejectionGuard = true;
+  globalThis.addEventListener("unhandledrejection", (e) => {
+    console.log("[relay] unhandled rejection (ignored):", (e.reason as Error)?.message ?? e.reason);
+    e.preventDefault();
+  });
+}
+
+export async function startRelay(options: RelayOptions = {}): Promise<RelayHandle> {
+  installUnhandledRejectionGuard();
+  const host = options.host ?? "127.0.0.1";
+  const loopback = LOOPBACK_HOSTS.has(host);
+  const secured = options.cert !== undefined && options.key !== undefined &&
+    options.auth !== undefined;
+  if (!loopback && !secured && options.unsafeNonLoopback !== true) {
+    throw new Error(
+      `host ${host} is not loopback: without --cert, --key and --auth-file together the ` +
+        "relay serves wildcard CORS and an unauthenticated WebTransport session to every " +
+        "origin that can reach it. Bind 127.0.0.1, pass the three flags, or pass " +
+        "--unsafe-non-loopback (RelayOptions.unsafeNonLoopback) only behind your own TLS " +
+        "and access control",
+    );
+  }
+  if (!loopback && options.serveDir !== undefined) {
+    throw new Error(
+      `--serve-dir is refused on non-loopback host ${host}: a public relay serves only ` +
+        "the built cockpit",
+    );
+  }
+
+  // Resolve the served roots before binding anything so a bad path fails
+  // fast, without a QUIC endpoint or timer left behind.
+  const cockpitRoot = options.cockpitDir ? resolveDirUrl(options.cockpitDir, "cockpitDir") : null;
+  const sdkRoot = options.sdkDir ? resolveDirUrl(options.sdkDir, "sdkDir") : null;
+  const serveRoot = options.serveDir ? resolveDirUrl(options.serveDir, "serveDir") : null;
+  // A user directory replaces the cockpit at /; /api/* and /sdk.js keep
+  // precedence over it in handleHttp.
+  const staticRoot = serveRoot ?? cockpitRoot;
+
+  // A real certificate (--cert/--key) is served as-is and its hash is not
+  // advertised: clients verify it like any other. Without one, an ephemeral
+  // self-signed certificate is pinned by hash through /api/info.
+  let cert: ServedCert;
+  if (options.cert !== undefined && options.key !== undefined) {
+    cert = { certPem: options.cert, keyPem: options.key };
+  } else if (options.cert === undefined && options.key === undefined) {
+    cert = await makeEphemeralCert();
+  } else {
+    throw new Error(CERT_KEY_PAIR_ERROR);
+  }
+  const tls = cert.certHashB64 === undefined;
+
+  const hub = options.rtc === undefined
+    ? null
+    : new RtcHub(new CloudflareClient(options.rtc, options.rtcFetch));
+  const registry = new Registry(Date.now, hub, options.openTopics ?? options.auth === undefined);
+  // Awaited, and before either listener binds: a peer gets its ICE servers
+  // right after welcome (and again at every refresh, through the registry),
+  // and nothing answers while the relay is half started (handleHttp closes
+  // over registry and auth).
+  if (hub !== null) await hub.start(() => registry.refreshIce());
+  const auth = options.auth ?? null;
+
+  // HTTP binds first so --port 0 works in both modes. With a real
+  // certificate QUIC shares its port (one "443 TCP + 443 UDP" rule pair, and
+  // /api/info derives the WebTransport URL from the request host); otherwise
+  // QUIC binds an ephemeral port that clients discover via the ready line or
+  // /api/info, so --port stays a single HTTP-facing knob. A port chosen for
+  // TCP can already be in use on UDP, so retry that collision for --port 0.
+  // Each bind fails synchronously (AddrInUse, a bad PEM). A retry closes its
+  // candidate HTTP server; a final failure also closes the QUIC endpoint and
+  // the hub's TURN refresh interval.
+  let httpServer: Deno.HttpServer<Deno.NetAddr> | undefined;
+  let httpPort: number | undefined;
+  let endpoint: Deno.QuicEndpoint | undefined;
+  let listener: Deno.QuicListener;
+  try {
+    for (let attempt = 0; attempt < EPHEMERAL_PORT_ATTEMPTS; attempt++) {
+      httpServer = Deno.serve(
+        {
+          hostname: host,
+          port: options.port ?? 7780,
+          onListen: () => {},
+          cert: options.cert,
+          key: options.key,
+        },
+        handleHttp,
+      );
+      httpPort = (httpServer.addr as Deno.NetAddr).port;
+      try {
+        endpoint = new Deno.QuicEndpoint({ hostname: host, port: tls ? httpPort : 0 });
+        break;
+      } catch (e) {
+        await httpServer.shutdown();
+        httpServer = undefined;
+        if (
+          tls && options.port === 0 && e instanceof Deno.errors.AddrInUse &&
+          attempt < EPHEMERAL_PORT_ATTEMPTS - 1
+        ) continue;
+        throw new Error(
+          `QUIC cannot bind UDP port ${httpPort} (with --cert/--key it shares --port): ` +
+            ((e as Error)?.message ?? e),
+        );
+      }
+    }
+    if (httpServer === undefined || httpPort === undefined || endpoint === undefined) {
+      throw new Error("relay listeners were not initialized");
+    }
+    listener = endpoint.listen({
+      cert: cert.certPem,
+      key: cert.keyPem,
+      alpnProtocols: ["h3"],
+      maxIdleTimeout: MAX_IDLE_TIMEOUT_MS,
+      keepAliveInterval: KEEP_ALIVE_INTERVAL_MS,
+      ...(options.congestionControl !== undefined
+        ? { congestionControl: options.congestionControl }
+        : {}),
+    });
+  } catch (e) {
+    hub?.dispose();
+    endpoint?.close({ closeCode: 0, reason: "relay startup failed" });
+    await httpServer?.shutdown();
+    throw e;
+  }
+  const quicPort = endpoint.addr.port;
+  // 127.0.0.1 rather than localhost: Chrome resolves localhost to ::1 first
+  // and the endpoint binds IPv4. Hash pinning replaces hostname verification.
+  const urlHost = host === "0.0.0.0" ? "127.0.0.1" : host;
+  const wtUrl = `https://${urlHost}:${quicPort}`;
+
+  const sessions = new Set<WebTransport>();
+  let nextViewerId = 1;
+
+  function track(wt: WebTransport): void {
+    sessions.add(wt);
+    wt.closed.catch(() => {}).finally(() => sessions.delete(wt));
+  }
+
+  // Offers reap stale latest streams opportunistically, but an idle input
+  // stops offering; this interval bounds an idle stream's lifetime to just
+  // under 2x the stale window. The forced GC is what actually ends a reaped
+  // stream on Deno 2.6.10: abort() never reaches QUIC, the
+  // stream's FIN goes out when its wrapper is finalized, and without a GC
+  // per tick the viewer's uni-stream credit comes back only when V8 happens
+  // to collect - seconds to tens of seconds of frozen video. gc() exists
+  // only under --v8-flags=--expose-gc (relay_run_cmd passes it).
+  const reapTimer = setInterval(() => {
+    registry.reapAll(Date.now());
+    collectResetStreams();
+  }, LATEST_STALE_MS);
+  // A pending reap must not keep the Deno process alive after shutdown().
+  Deno.unrefTimer(reapTimer);
+
+  (async () => {
+    for await (const incoming of listener) {
+      (async () => {
+        const conn = await incoming.accept();
+        const wt = await Deno.upgradeWebTransport(conn);
+        await wt.ready;
+        track(wt);
+        const path = new URL(wt.url).pathname;
+        if (path === "/robot") new RobotSession(wt, conn, registry, auth).start();
+        else if (path === "/viewer") {
+          new ViewerSession(wt, nextViewerId++, registry, auth).start();
+        } else {
+          console.log(`[relay] rejecting unknown WebTransport endpoint ${path}`);
+          wt.close({ closeCode: 1, reason: "unknown WebTransport endpoint" });
+        }
+      })().catch((e) => console.log("[relay] accept failed:", (e as Error)?.message ?? e));
+    }
+  })().catch(() => {
+    // listener stopped (shutdown)
+  });
+
+  async function handleHttp(req: Request): Promise<Response> {
+    const url = new URL(req.url);
+    if (url.pathname === "/api/info") {
+      // The base, like the ready line: clients append /robot or /viewer.
+      // With a real certificate it is the origin the client dialed (right by
+      // construction: QUIC shares the port) and there is no hash to pin.
+      const info = {
+        ...(tls ? { wtUrl: url.origin } : { wtUrl, certHash: cert.certHashB64 }),
+        v: PROTOCOL_VERSION,
+        ...(hub !== null ? { rtc: true } : {}),
+      };
+      return Response.json(info, { headers: LOCAL_CORS });
+    }
+    if (url.pathname === "/api/stats") {
+      if (auth === null) return Response.json(registry.stats(), { headers: LOCAL_CORS });
+      // Operator tooling only: a bearer viewer token, and no CORS header.
+      if (!auth.bearerOk(req.headers.get("authorization"))) {
+        return new Response("unauthorized", {
+          status: 401,
+          headers: { "www-authenticate": "Bearer" },
+        });
+      }
+      return Response.json(registry.stats());
+    }
+    if (url.pathname === "/sdk.js") {
+      // Never falls through to a static root: a missing bundle must yield the
+      // hint, not HTML (an HTML body imported as a module is a baffling
+      // syntax error in the consumer page). The fixed name cannot traverse,
+      // so serveFrom only returns 200 or null here.
+      const found = sdkRoot === null ? null : await serveFrom(sdkRoot, "sdk.js");
+      const res = found ?? new Response(
+        "sdk bundle not built (dimos run --local-relay builds it; " +
+          "or run `deno task build` in web/sdk)",
+        { status: 404 },
+      );
+      // Also on the 404: a cross-origin page must be able to read the hint.
+      res.headers.set("access-control-allow-origin", "*");
+      // A rebuilt bundle must not be pinned by a stale browser cache.
+      res.headers.set("cache-control", "no-cache");
+      return res;
+    }
+    if (staticRoot === null) {
+      return new Response(
+        "cockpit dist not built (dimos run --local-relay builds it; " +
+          "or run `deno task build` in web/cockpit)",
+        { status: 404 },
+      );
+    }
+    const name = url.pathname === "/" ? "index.html" : url.pathname.slice(1);
+    const res = await serveFrom(staticRoot, name);
+    if (res === null) return new Response("not found", { status: 404 });
+    if (res.headers.get("content-type") === "application/javascript") {
+      // ES modules are fetched with CORS semantics: a page on another local
+      // origin importing a module served from this root needs the header
+      // (same local trust policy as /sdk.js).
+      res.headers.set("access-control-allow-origin", "*");
+    }
+    return res;
+  }
+
+  return {
+    httpPort,
+    quicPort,
+    wtUrl,
+    certHash: cert.certHashB64,
+    async shutdown(): Promise<void> {
+      clearInterval(reapTimer);
+      hub?.dispose();
+      for (const wt of sessions) {
+        try {
+          wt.close({ closeCode: 0, reason: "relay shutdown" });
+        } catch {
+          // already gone
+        }
+      }
+      listener.stop();
+      endpoint.close({ closeCode: 0, reason: "relay shutdown" });
+      await httpServer.shutdown();
+    },
+  };
+}

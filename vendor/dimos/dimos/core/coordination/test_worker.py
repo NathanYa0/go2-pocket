@@ -1,0 +1,579 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from contextlib import nullcontext
+import threading
+import time
+from typing import TYPE_CHECKING
+
+import pytest
+from pytest_mock import MockerFixture
+
+from dimos.agents.annotation import skill
+from dimos.core.coordination.python_worker import (
+    Actor,
+    MethodCallProxy,
+    PythonWorker,
+    _handle_request,
+    _WorkerState,
+)
+from dimos.core.coordination.worker_manager_python import WorkerManagerPython
+from dimos.core.coordination.worker_messages import UndeployModuleRequest
+from dimos.core.core import rpc
+from dimos.core.global_config import GlobalConfig, global_config
+from dimos.core.module import Module
+from dimos.core.stream import In, Out
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.protocol.encode.cbor import decode, encode
+
+if TYPE_CHECKING:
+    from dimos.core.resource_monitor.stats import WorkerStats
+
+
+class SimpleModule(Module):
+    output: Out[Vector3]
+    input: In[Vector3]
+
+    counter: int = 0
+
+    @rpc
+    def start(self) -> None:
+        pass
+
+    @rpc
+    def increment(self) -> int:
+        self.counter += 1
+        return self.counter
+
+    @rpc
+    def get_counter(self) -> int:
+        return self.counter
+
+    @rpc
+    def read_global_robot_ip(self) -> str | None:
+        return global_config.robot_ip
+
+    @rpc
+    def unencodable(self) -> threading.Lock:
+        return threading.Lock()
+
+    @rpc
+    def make_lock(self) -> None:
+        self.lock = threading.Lock()
+
+
+class AnotherModule(Module):
+    value: int = 100
+
+    @rpc
+    def start(self) -> None:
+        pass
+
+    @rpc
+    def add(self, n: int) -> int:
+        self.value += n
+        return self.value
+
+    @rpc
+    def get_value(self) -> int:
+        return self.value
+
+
+class ThirdModule(Module):
+    multiplier: int = 1
+
+    @rpc
+    def start(self) -> None:
+        pass
+
+    @rpc
+    def multiply(self, n: int) -> int:
+        self.multiplier *= n
+        return self.multiplier
+
+    @rpc
+    def get_multiplier(self) -> int:
+        return self.multiplier
+
+
+class HeavyModule(Module):
+    dedicated_worker = True
+
+    @rpc
+    def start(self) -> None:
+        pass
+
+
+class AnotherHeavyModule(Module):
+    dedicated_worker = True
+
+    @rpc
+    def start(self) -> None:
+        pass
+
+
+@pytest.fixture
+def create_worker_manager():
+    manager = None
+
+    def _create(n_workers):
+        nonlocal manager
+        g = GlobalConfig(n_workers=n_workers)
+        manager = WorkerManagerPython(g=g)
+        manager.start()
+        return manager
+
+    yield _create
+
+    if manager is not None:
+        manager.stop()
+
+
+def test_worker_manager_basic(create_worker_manager):
+    worker_manager = create_worker_manager(n_workers=2)
+    module = worker_manager.deploy(SimpleModule, global_config, {})
+    module.start()
+
+    result = module.increment()
+    assert result == 1
+
+    result = module.increment()
+    assert result == 2
+
+    result = module.get_counter()
+    assert result == 2
+
+    module.stop()
+
+
+def test_undeploy_keeps_instance_until_stop_succeeds(mocker: MockerFixture) -> None:
+    module = mocker.Mock(spec=Module)
+    module.stop.side_effect = [RuntimeError("stop failed"), RuntimeError("stop failed"), None]
+    state = _WorkerState(instances={7: module}, worker_id=1)
+    request = UndeployModuleRequest(module_id=7)
+
+    for _ in range(2):
+        with pytest.raises(RuntimeError, match="stop failed"):
+            _handle_request(request, state)
+        assert state.instances == {7: module}
+
+    response = _handle_request(request, state)
+
+    assert response.result is True
+    assert state.instances == {}
+    assert module.stop.call_count == 3
+
+
+@pytest.mark.parametrize(
+    "exitcode, expectation, remaining",
+    [
+        (None, pytest.raises(EOFError, match="worker pipe closed"), 1),
+        (-15, nullcontext(), 0),
+    ],
+    ids=["unconfirmed-exit", "confirmed-exit"],
+)
+def test_undeploy_after_pipe_failure_requires_confirmed_worker_exit(
+    mocker, monkeypatch, exitcode, expectation, remaining
+):
+    worker = PythonWorker()
+    process = mocker.Mock(exitcode=None)
+    conn = mocker.Mock()
+    actor = Actor(conn, SimpleModule, worker.worker_id, 7, threading.Lock())
+    monkeypatch.setattr(worker, "_process", process)
+    monkeypatch.setattr(worker, "_conn", conn)
+    monkeypatch.setattr(worker, "_modules", {7: actor})
+
+    def disconnect():
+        process.exitcode = exitcode
+        raise EOFError("worker pipe closed")
+
+    conn.recv_bytes.side_effect = disconnect
+
+    with expectation:
+        worker.undeploy_module(7)
+    assert worker.module_count == remaining
+
+
+def test_worker_manager_stops_workers_concurrently_and_only_once(mocker, monkeypatch):
+    manager = WorkerManagerPython(g=GlobalConfig(n_workers=0))
+    workers = [PythonWorker(), PythonWorker()]
+    monkeypatch.setattr(manager, "_workers", workers)
+    barrier = threading.Barrier(len(workers), timeout=2)
+    finished = []
+
+    def shutdown() -> None:
+        barrier.wait()
+        finished.append(True)
+
+    shutdowns = [
+        mocker.patch.object(worker, "shutdown", side_effect=shutdown) for worker in workers
+    ]
+    try:
+        manager.stop()
+        manager.stop()
+        assert finished == [True, True]
+        for stop in shutdowns:
+            stop.assert_called_once_with()
+        assert manager.workers == []
+    finally:
+        manager.stop()
+
+
+def test_worker_shutdown_kills_and_reaps_a_process_that_ignores_terminate(mocker, monkeypatch):
+    worker = PythonWorker()
+    process = mocker.Mock()
+    process.is_alive.side_effect = [True, True, False]
+    monkeypatch.setattr(worker, "_process", process)
+
+    worker.shutdown()
+    worker.shutdown()
+
+    process.terminate.assert_called_once_with()
+    process.kill.assert_called_once_with()
+    process.close.assert_called_once_with()
+    assert process.join.call_count == 3
+    assert worker.pid is None
+
+
+def test_unencodable_rpc_result_raises_without_killing_the_worker(create_worker_manager):
+    """An RPC result that cannot be encoded comes back as the error, not a dead worker."""
+    worker_manager = create_worker_manager(n_workers=1)
+    module = worker_manager.deploy(SimpleModule, global_config, {})
+    module.start()
+
+    with pytest.raises(TypeError, match="Cannot CBOR-encode"):
+        module.unencodable()
+
+    assert module.increment() == 1
+
+    module.stop()
+
+
+def test_unencodable_pipe_response_raises_without_killing_the_worker(create_worker_manager):
+    """A response the worker pipe cannot encode errors out; the worker lives on."""
+    worker_manager = create_worker_manager(n_workers=1)
+    module = worker_manager.deploy(SimpleModule, global_config, {})
+    module.start()
+    module.make_lock()
+
+    # Attribute access rides the pipe, unlike rpc calls, which ride the transport.
+    with pytest.raises(RuntimeError, match="Cannot CBOR-encode"):
+        module.actor_instance.lock  # noqa: B018
+
+    assert module.increment() == 1
+
+    module.stop()
+
+
+def test_worker_inherits_host_global_config(create_worker_manager):
+    worker_manager = create_worker_manager(n_workers=1)
+    host_config = GlobalConfig(robot_ip="10.11.12.13")
+    module = worker_manager.deploy(SimpleModule, host_config, {})
+    module.start()
+
+    assert module.read_global_robot_ip() == "10.11.12.13"
+
+    module.stop()
+
+
+def test_worker_manager_multiple_different_modules(create_worker_manager):
+    worker_manager = create_worker_manager(n_workers=2)
+    module1 = worker_manager.deploy(SimpleModule, global_config, {})
+    module2 = worker_manager.deploy(AnotherModule, global_config, {})
+
+    module1.start()
+    module2.start()
+
+    # Each module has its own state
+    module1.increment()
+    module1.increment()
+    module2.add(10)
+
+    assert module1.get_counter() == 2
+    assert module2.get_value() == 110
+
+    # Stop modules to clean up threads
+    module1.stop()
+    module2.stop()
+
+
+def test_worker_manager_parallel_deployment(create_worker_manager):
+    worker_manager = create_worker_manager(n_workers=2)
+    simple_kwargs = {}
+    modules = worker_manager.deploy_parallel(
+        [
+            (SimpleModule, global_config, simple_kwargs),
+            (AnotherModule, global_config, {}),
+            (ThirdModule, global_config, {}),
+        ],
+    )
+
+    assert len(modules) == 3
+    assert simple_kwargs == {}
+    module1, module2, module3 = modules
+
+    # Start all modules
+    module1.start()
+    module2.start()
+    module3.start()
+
+    # Each module has its own state
+    module1.increment()
+    module2.add(50)
+    module3.multiply(5)
+
+    assert module1.get_counter() == 1
+    assert module2.get_value() == 150
+    assert module3.get_multiplier() == 5
+
+    # Stop modules
+    module1.stop()
+    module2.stop()
+    module3.stop()
+
+
+def test_collect_stats(create_worker_manager):
+    from dimos.core.resource_monitor.monitor import StatsMonitor
+
+    manager = create_worker_manager(n_workers=2)
+    module1 = manager.deploy(SimpleModule, global_config, {})
+    module2 = manager.deploy(AnotherModule, global_config, {})
+    module1.start()
+    module2.start()
+
+    # Use a capturing logger to collect stats via StatsMonitor
+    captured: list[list[WorkerStats]] = []
+
+    class CapturingLogger:
+        def log_stats(self, coordinator, workers):
+            captured.append(workers)
+
+        def stop(self):
+            pass
+
+    monitor = StatsMonitor(manager, resource_logger=CapturingLogger(), interval=0.5)
+    monitor.start()
+    import time
+
+    time.sleep(1.5)
+    monitor.stop()
+
+    assert len(captured) >= 1
+    stats = captured[-1]
+    assert len(stats) == 2
+
+    for s in stats:
+        assert s.alive is True
+        assert s.pid > 0
+        assert s.pss >= 0
+        assert s.num_threads >= 1
+        assert s.num_fds >= 0
+        assert s.io_read_bytes >= 0
+        assert s.io_write_bytes >= 0
+
+    # At least one worker should report module names
+    all_modules = [name for s in stats for name in s.modules]
+    assert "SimpleModule" in all_modules
+    assert "AnotherModule" in all_modules
+
+    module1.stop()
+    module2.stop()
+
+
+def test_worker_pool_modules_share_workers(create_worker_manager):
+    manager = create_worker_manager(n_workers=1)
+    module1 = manager.deploy(SimpleModule, global_config, {})
+    module2 = manager.deploy(AnotherModule, global_config, {})
+
+    module1.start()
+    module2.start()
+
+    # Verify isolated state
+    module1.increment()
+    module1.increment()
+    module2.add(10)
+
+    assert module1.get_counter() == 2
+    assert module2.get_value() == 110
+
+    # Verify only 1 worker process was used
+    assert len(manager._workers) == 1
+    assert manager._workers[0].module_count == 2
+
+    module1.stop()
+    module2.stop()
+
+
+@pytest.fixture
+def manager_and_modules():
+    """Fixture that tracks deployed modules and stops them on teardown."""
+    manager = None
+    modules = []
+
+    def _create(n_workers):
+        nonlocal manager
+        g = GlobalConfig(n_workers=n_workers)
+        manager = WorkerManagerPython(g=g)
+        manager.start()
+        return manager, modules
+
+    yield _create
+
+    for m in reversed(modules):
+        m.stop()
+    if manager is not None:
+        manager.stop()
+
+
+def test_health_check_alive_workers(manager_and_modules):
+    manager, modules = manager_and_modules(n_workers=2)
+    module = manager.deploy(SimpleModule, global_config, {})
+    modules.append(module)
+    module.start()
+
+    assert manager.health_check() is True
+
+
+def test_add_workers_grows_pool(manager_and_modules):
+    manager, modules = manager_and_modules(n_workers=1)
+    manager.add_workers(2)
+
+    assert len(manager._workers) == 3
+
+    # Deploy on the expanded pool and verify it works
+    module = manager.deploy(SimpleModule, global_config, {})
+    modules.append(module)
+    module.start()
+    assert module.increment() == 1
+
+
+def test_load_balancing_distributes_modules(manager_and_modules):
+    manager, modules = manager_and_modules(n_workers=2)
+
+    for _ in range(4):
+        m = manager.deploy(SimpleModule, global_config, {})
+        modules.append(m)
+        m.start()
+
+    # Each worker should have 2 modules (even distribution)
+    counts = [w.module_count for w in manager._workers]
+    assert counts == [2, 2]
+
+
+def test_dedicated_worker_gets_own_process(manager_and_modules):
+    manager, modules = manager_and_modules(n_workers=2)
+
+    heavy = manager.deploy(HeavyModule, global_config, {})
+    modules.append(heavy)
+    heavy.start()
+
+    for _ in range(3):
+        m = manager.deploy(SimpleModule, global_config, {})
+        modules.append(m)
+        m.start()
+
+    counts = sorted(w.module_count for w in manager._workers)
+    # One worker hosts only the dedicated module; the other hosts the 3 light ones.
+    assert counts == [1, 3]
+    assert sum(1 for w in manager._workers if w.dedicated) == 1
+
+
+def test_dedicated_workers_trigger_autoscale(manager_and_modules):
+    manager, modules = manager_and_modules(n_workers=2)
+
+    heavy1 = manager.deploy(HeavyModule, global_config, {})
+    modules.append(heavy1)
+    heavy1.start()
+    heavy2 = manager.deploy(AnotherHeavyModule, global_config, {})
+    modules.append(heavy2)
+    heavy2.start()
+
+    # 2 dedicated modules require >= 4 total workers so non-dedicated workers
+    # at least match the dedicated count.
+    assert len(manager._workers) == 4
+    assert sum(1 for w in manager._workers if w.dedicated) == 2
+
+
+class WarmedMsg:
+    """Stand-in for a message type with heavy decode dependencies."""
+
+    warmed_on: str | None = None  # thread name, set in the worker process
+
+    @classmethod
+    def lcm_warmup(cls) -> None:
+        cls.warmed_on = threading.current_thread().name
+
+
+class WarmedModule(Module):
+    input: In[WarmedMsg]
+    skills_built_on: str | None = None
+
+    @rpc
+    def start(self) -> None:
+        pass
+
+    @skill
+    def wave(self) -> str:
+        """Wave at the operator."""
+        return "waved"
+
+    def _build_skills(self):
+        self.skills_built_on = threading.current_thread().name
+        return super()._build_skills()
+
+    @rpc
+    def warmed_on(self) -> tuple[str | None, str | None]:
+        return WarmedMsg.warmed_on, self.skills_built_on
+
+
+class UnwarmedInputsModule(WarmedModule):
+    warm_up_inputs = False
+
+
+def _wait_for_warm_up(module) -> tuple[str | None, str | None]:
+    # Skills are warmed up last, so once they are built the whole warm-up ran.
+    deadline = time.monotonic() + 5
+    while module.warmed_on()[1] is None and time.monotonic() < deadline:
+        time.sleep(0.05)
+    return module.warmed_on()
+
+
+@pytest.mark.skipif_macos_bug
+def test_deploy_warms_up_inputs_and_skills_on_a_background_thread(create_worker_manager):
+    worker_manager = create_worker_manager(n_workers=1)
+    module = worker_manager.deploy(WarmedModule, global_config, {})
+    module.start()
+
+    assert _wait_for_warm_up(module) == ("warmup-WarmedModule", "warmup-WarmedModule")
+    assert [s.func_name for s in module.get_skills()] == ["wave"]
+    module.stop()
+
+
+@pytest.mark.skipif_macos_bug
+def test_module_can_opt_out_of_input_warm_up(create_worker_manager):
+    worker_manager = create_worker_manager(n_workers=1)
+    module = worker_manager.deploy(UnwarmedInputsModule, global_config, {})
+    module.start()
+
+    assert _wait_for_warm_up(module) == (None, "warmup-UnwarmedInputsModule")
+    module.stop()
+
+
+def test_actor_and_method_call_proxy_cross_processes_as_ids() -> None:
+    actor = Actor(None, SimpleModule, worker_id=3, module_id=7, lock=threading.Lock())
+    restored = decode(encode(MethodCallProxy(actor)))
+    assert type(restored) is MethodCallProxy
+    inner = restored._actor
+    assert (inner._worker_id, inner._module_id) == (3, 7)
+    assert inner._conn is None and inner._cls is None and inner._lock is None

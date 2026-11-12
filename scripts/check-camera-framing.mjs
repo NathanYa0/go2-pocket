@@ -22,3 +22,11 @@ for (const [w,h] of [[926,428],[852,393],[667,375],[844,390],[393,852]]) {
   }
 }
 console.log('PASS: lidar bounds fit 5 phone sizes and 3 headings; target stays between controls, no clipping, larger areas zoom out.');
+
+const miniBounds=new THREE.Box3(new THREE.Vector3(-3,-3,-.4),new THREE.Vector3(3,3,1.5));
+const miniRobot=new THREE.Vector3(0,0,0);
+const compact=lidarFrame(miniBounds,miniRobot,0,240,100,60,false);
+const padded=lidarFrame(miniBounds,miniRobot,0,240,100,60);
+assert.ok(compact.position.distanceTo(compact.target)<padded.position.distanceTo(padded.target),'secondary view does not reserve joystick space');
+assert.equal(compact.offsetY,0);
+console.log('PASS: secondary LiDAR view uses full canvas without changing Drive framing defaults.');

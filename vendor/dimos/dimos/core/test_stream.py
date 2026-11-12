@@ -1,0 +1,321 @@
+# Copyright 2025-2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+import threading
+import time
+from types import SimpleNamespace
+from typing import Any
+
+import pytest
+
+from dimos.core.coordination.python_worker import Actor
+from dimos.core.core import rpc
+from dimos.core.module import Module
+from dimos.core.stream import In, Out, RemoteOut
+from dimos.core.testing import MockRobotClient
+from dimos.core.transport import LCMTransport, pLCMTransport
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.protocol.encode.cbor import decode, encode
+from dimos.robot.unitree.type.odometry import Odometry
+from dimos.utils.testing.waiting import wait_until
+
+
+class OdometryPublisher(Module):
+    odometry: Out[Odometry]
+
+    @rpc
+    def publish(self, odom: Odometry) -> None:
+        self.odometry.publish(odom)
+
+
+class SubscriberBase(Module):
+    sub1_msgs: list[Odometry]
+    sub2_msgs: list[Odometry]
+
+    def __init__(self, **kwargs: Any) -> None:
+        self.sub1_msgs = []
+        self.sub2_msgs = []
+        self._sub1_received = threading.Event()
+        self._sub2_received = threading.Event()
+        super().__init__(**kwargs)
+
+    def _sub1_callback(self, msg) -> None:
+        self.sub1_msgs.append(msg)
+        self._sub1_received.set()
+
+    def _sub2_callback(self, msg) -> None:
+        self.sub2_msgs.append(msg)
+        self._sub2_received.set()
+
+    @rpc
+    def sub1(self) -> None: ...
+
+    @rpc
+    def sub2(self) -> None: ...
+
+    @rpc
+    def wait_for_sub1_msg(self, timeout: float = 10) -> bool:
+        return self._sub1_received.wait(timeout)
+
+    @rpc
+    def wait_for_sub2_msg(self, timeout: float = 10) -> bool:
+        return self._sub2_received.wait(timeout)
+
+    @rpc
+    def active_subscribers(self):
+        return self.odom.transport.active_subscribers
+
+    @rpc
+    def sub1_msgs_len(self) -> int:
+        return len(self.sub1_msgs)
+
+    @rpc
+    def sub2_msgs_len(self) -> int:
+        return len(self.sub2_msgs)
+
+
+class ClassicSubscriber(SubscriberBase):
+    odom: In[Odometry]
+    unsub: Callable[[], None] | None = None
+    unsub2: Callable[[], None] | None = None
+
+    @rpc
+    def sub1(self) -> None:
+        self.unsub = self.odom.subscribe(self._sub1_callback)
+
+    @rpc
+    def sub2(self) -> None:
+        self.unsub2 = self.odom.subscribe(self._sub2_callback)
+
+    @rpc
+    def unsub_all(self) -> None:
+        if self.unsub:
+            self.unsub()
+            self.unsub = None
+        if self.unsub2:
+            self.unsub2()
+            self.unsub2 = None
+
+
+class RXPYSubscriber(SubscriberBase):
+    odom: In[Odometry]
+    unsub: Callable[[], None] | None = None
+    unsub2: Callable[[], None] | None = None
+
+    hot: Callable[[], None] | None = None
+
+    @rpc
+    def sub1(self) -> None:
+        self.unsub = self.odom.observable().subscribe(self._sub1_callback)
+
+    @rpc
+    def sub2(self) -> None:
+        self.unsub2 = self.odom.observable().subscribe(self._sub2_callback)
+
+    @rpc
+    def unsub_all(self) -> None:
+        if self.unsub:
+            self.unsub.dispose()
+            self.unsub = None
+        if self.unsub2:
+            self.unsub2.dispose()
+            self.unsub2 = None
+
+    @rpc
+    def get_next(self):
+        return self.odom.get_next()
+
+    @rpc
+    def start_hot_getter(self) -> None:
+        self.hot = self.odom.hot_latest()
+
+    @rpc
+    def stop_hot_getter(self) -> None:
+        self.hot.dispose()
+
+    @rpc
+    def get_hot(self):
+        return self.hot()
+
+
+class SpyLCMTransport(LCMTransport):
+    active_subscribers: int = 0
+
+    def __init__(self, topic: str, type: type, **kwargs) -> None:
+        super().__init__(topic, type, **kwargs)
+        self._subscriber_map = {}  # Maps unsubscribe functions to track active subs
+
+    def subscribe(self, selfstream: In, callback: Callable) -> Callable[[], None]:
+        # Call parent subscribe to get the unsubscribe function
+        unsubscribe_fn = super().subscribe(selfstream, callback)
+
+        # Increment counter
+        self.active_subscribers += 1
+
+        def wrapped_unsubscribe() -> None:
+            # Create wrapper that decrements counter when called
+            if wrapped_unsubscribe in self._subscriber_map:
+                self.active_subscribers -= 1
+                del self._subscriber_map[wrapped_unsubscribe]
+            unsubscribe_fn()
+
+        # Track this subscription
+        self._subscriber_map[wrapped_unsubscribe] = True
+
+        return wrapped_unsubscribe
+
+
+@pytest.mark.self_hosted
+@pytest.mark.parametrize("subscriber_class", [ClassicSubscriber, RXPYSubscriber])
+def test_subscription(dimos, subscriber_class) -> None:
+    robot = dimos.deploy(MockRobotClient)
+
+    robot.lidar.transport = SpyLCMTransport("/lidar", PointCloud2)
+    robot.odometry.transport = SpyLCMTransport("/odom", Odometry)
+    robot.mov.transport = pLCMTransport("/mov")
+
+    subscriber = dimos.deploy(subscriber_class)
+
+    subscriber.odom.connect(robot.odometry)
+
+    robot.start()
+    subscriber.sub1()
+    assert subscriber.wait_for_sub1_msg(), "no odometry reached sub1 within its wait"
+
+    assert subscriber.sub1_msgs_len() > 0
+    assert subscriber.sub2_msgs_len() == 0
+    assert subscriber.active_subscribers() == 1
+
+    subscriber.sub2()
+    assert subscriber.wait_for_sub2_msg(), "no odometry reached sub2 within its wait"
+
+    subscriber.unsub_all()
+
+    assert subscriber.active_subscribers() == 0
+    assert subscriber.sub1_msgs_len() != 0
+    assert subscriber.sub2_msgs_len() != 0
+
+    total_msg_n = subscriber.sub1_msgs_len() + subscriber.sub2_msgs_len()
+
+    time.sleep(0.5)
+
+    # ensuring no new messages have passed through
+    assert total_msg_n == subscriber.sub1_msgs_len() + subscriber.sub2_msgs_len()
+
+    robot.stop()
+    subscriber.stop_rpc_client()
+    robot.stop_rpc_client()
+
+
+@pytest.fixture
+def odometry_publisher(dimos):
+    publisher = dimos.deploy(OdometryPublisher)
+    with SpyLCMTransport("/test_get_next/odom", Odometry) as transport:
+        publisher.odometry.transport = transport
+        publisher.start()
+        yield publisher
+
+
+def test_get_next(dimos, odometry_publisher) -> None:
+    subscriber = dimos.deploy(RXPYSubscriber)
+    subscriber.odom.connect(odometry_publisher.odometry)
+
+    # The replay thread imports open3d between odometry samples, which exceeded
+    # get_next's timeout on a loaded runner. Publish only what we test.
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        for x in (1.0, 2.0):
+            expected = Odometry(position=[x, 0.0, 0.0], ts=x, frame_id="world")
+            received = executor.submit(subscriber.get_next)
+            wait_until(lambda: subscriber.active_subscribers() == 1, timeout=5.0)
+            assert not received.done()
+
+            odometry_publisher.publish(expected)
+
+            odom = received.result(timeout=5.0)
+            assert isinstance(odom, Odometry)
+            assert odom == expected
+            assert odom.ts == expected.ts
+            assert odom.frame_id == expected.frame_id
+            wait_until(lambda: subscriber.active_subscribers() == 0, timeout=5.0)
+
+
+@pytest.mark.self_hosted
+def test_hot_getter(dimos) -> None:
+    robot = dimos.deploy(MockRobotClient)
+
+    robot.lidar.transport = SpyLCMTransport("/lidar", PointCloud2)
+    robot.odometry.transport = SpyLCMTransport("/odom", Odometry)
+    robot.mov.transport = pLCMTransport("/mov")
+
+    subscriber = dimos.deploy(RXPYSubscriber)
+    subscriber.odom.connect(robot.odometry)
+
+    robot.start()
+
+    # we are robust to multiple calls
+    subscriber.start_hot_getter()
+    time.sleep(0.2)
+    odom = subscriber.get_hot()
+    subscriber.stop_hot_getter()
+
+    assert isinstance(odom, Odometry)
+    time.sleep(0.3)
+
+    # there are no subs
+    assert subscriber.active_subscribers() == 0
+
+    # we can restart though
+    subscriber.start_hot_getter()
+    time.sleep(0.3)
+
+    next_odom = subscriber.get_hot()
+    assert isinstance(next_odom, Odometry)
+    assert next_odom != odom
+    subscriber.stop_hot_getter()
+
+    robot.stop()
+    subscriber.stop_rpc_client()
+    robot.stop_rpc_client()
+
+
+def test_out_publish_reaches_subscribers_after_one_unsubscribes_mid_publish() -> None:
+    out: Out[int] = Out(int, "numbers")
+    received: list[int] = []
+
+    def unsubscribe_on_first(_: int) -> None:
+        unsubscribe()
+
+    unsubscribe = out.subscribe(unsubscribe_on_first)
+    out.subscribe(received.append)
+
+    out.publish(1)
+    out.publish(2)
+
+    assert received == [1, 2]
+
+
+def test_module_stream_crosses_processes_as_a_remote_handle() -> None:
+    owner = SimpleNamespace(ref=Actor(None, None, worker_id=1, module_id=2))
+    out = Out(Odometry, "odom", owner=owner)
+    remote = decode(encode(out))
+    assert type(remote) is RemoteOut
+    assert remote.type is Odometry and remote.name == "odom"
+    assert (remote.owner._worker_id, remote.owner._module_id) == (1, 2)
+    assert remote.transport is None
+
+    # encode() turns whatever a hook raises into a TypeError that names the path.
+    with pytest.raises(TypeError, match=r"In at value: .*owner ref"):
+        encode(In(Odometry, "odom"))
