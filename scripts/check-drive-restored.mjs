@@ -21,6 +21,6 @@ try{
  await page.getByText('Sit Down',{exact:true}).waitFor({state:'visible'});
  await page.evaluate(()=>window.testApp.actionBar.togglePopup());
  await page.getByRole('button',{name:'Open mapping',exact:true}).click();
- await page.waitForSelector('.mapping-page');
+ await page.waitForSelector('.auto-map-page');
  console.log('PASS: original unscaled Drive, both joysticks, Trick or Treat, full Actions menu and added Map button. Preview only; no robot commands.');
 }finally{await browser.close();}

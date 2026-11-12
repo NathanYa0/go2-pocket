@@ -13,52 +13,43 @@ import time
 
 from dotenv import dotenv_values
 import numpy as np
+from matplotlib import colormaps
 from dimos.porcelain.dimos import Dimos
 from dimos.navigation.go2.loop_closure.premap import Premap
+from controls import OperatorControls, stop_motion
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "vendor/dimos"
 RUNTIME = ROOT / "output/mapping"
-COMMANDS: queue.Queue[str] = queue.Queue()
+COMMANDS: queue.Queue[dict] = queue.Queue(maxsize=64)
+OUTPUT_LOCK = threading.Lock()
 STOP = threading.Event()
 
 
 def emit(**data: object) -> None:
-    print(json.dumps(data, allow_nan=False, separators=(",", ":")), flush=True)
+    with OUTPUT_LOCK:
+        print(json.dumps(data, allow_nan=False, separators=(",", ":")), flush=True)
 
 
 def receive() -> None:
     for line in sys.stdin:
         try:
-            command = json.loads(line)["command"]
+            message = json.loads(line)
+            command = message["command"]
             if command == "stop":
                 STOP.set()
             else:
-                COMMANDS.put(command)
-        except (ValueError, KeyError, TypeError):
+                COMMANDS.put_nowait(message)
+        except (ValueError, KeyError, TypeError, queue.Full):
             continue
     STOP.set()  # parent disappeared
-
-
-def stop_motion(app: Dimos) -> bool:
-    ok = True
-    for call in (
-        app.WavefrontFrontierExplorer.end_exploration,
-        app.ReplanningAStarPlanner.cancel_goal,
-        app.GO2Connection.stop_movement,
-    ):
-        try:
-            call()
-        except Exception:
-            ok = False
-    return ok
 
 
 def preview(points) -> dict:
     xyz = np.asarray(points.points_f32())
     xyz = xyz[np.isfinite(xyz).all(axis=1)]
-    xyz = xyz[::max(1, int(np.ceil(len(xyz) / 30000)))]
-    return {"points": np.round(xyz, 3).tolist(), "frame": "map", "capturedAt": time.time() * 1000}
+    xyz = xyz[::max(1, int(np.ceil(len(xyz) / 300000)))]
+    return {"points": np.round(xyz, 3).tolist(), "frame": points.frame_id, "capturedAt": time.time() * 1000, "totalPoints": int(len(points.points_f32())), "palette": (colormaps["turbo"](np.linspace(0, 1, 256))[:, :3] * 255).astype(int).tolist()}
 
 
 def save_preview(run_id: str, cloud: dict) -> None:
@@ -95,6 +86,7 @@ def main() -> int:
     child = None
     saved = False
     stop_confirmed = False
+    subscriptions = []
     cloud = {"points": [], "frame": "map", "capturedAt": 0}
     try:
         # DimOS diagnostic logs may include network details: keep them local.
@@ -124,29 +116,54 @@ def main() -> int:
                     emit(state="error", message="Mapper did not become ready. See the local session log.")
                 return 1
             emit(state="mapping", message="Mapping is ready. Press Explore to begin walking.")
-            last_cloud = 0.0
+            controls = OperatorControls(app)
+            latest = {"cloud": None, "pose": None, "path": None}
+            lock = threading.Lock()
+            def store(name, value):
+                with lock:
+                    latest[name] = value
+            def on_pose(p):
+                q = p.orientation
+                yaw = float(np.arctan2(2 * (q.w*q.z + q.x*q.y), 1 - 2 * (q.y*q.y + q.z*q.z)))
+                store("pose", {"position": [float(p.x), float(p.y), float(p.z)], "yaw": yaw,
+                               "frame": p.frame_id, "receivedAt": time.time()*1000})
+            def on_path(path):
+                store("path", {"points": [[float(p.x), float(p.y), float(p.z)] for p in path.poses], "frame": path.frame_id})
+            subscriptions.append(app.PGOVoxelMapper.get_stream("global_map").subscribe(lambda c: store("cloud", c)))
+            subscriptions.append(app.GO2Connection.get_stream("odom").subscribe(on_pose))
+            subscriptions.append(app.ReplanningAStarPlanner.get_stream("path").subscribe(on_path))
+            last_cloud = last_status = 0.0
+            planner = "NavigationState.IDLE"
+            active = False
+            seen_cloud = None
             while not STOP.is_set() and child.poll() is None:
+                with lock:
+                    current = latest.copy()
                 try:
-                    command = COMMANDS.get_nowait()
+                    message = COMMANDS.get_nowait()
                 except queue.Empty:
-                    command = ""
-                if command == "explore":
-                    app.WavefrontFrontierExplorer.begin_exploration()
-                elif command == "pause":
-                    if not stop_motion(app):
-                        raise RuntimeError("Stop could not be confirmed")
-                active = app.WavefrontFrontierExplorer.is_exploration_active()
-                emit(state="exploring" if active else "mapping",
-                     message="Exploring reachable frontiers." if active else "Mapping stationary. Explore can continue; Stop & Save ends the session.",
-                     planner=str(app.ReplanningAStarPlanner.get_state()))
-                if time.monotonic() - last_cloud >= 2:
-                    points = app.peek_stream("global_map", timeout=0.1)
-                    if points is not None:
-                        cloud = preview(points)
-                        emit(cloud=cloud)
-                        save_preview(run_id, cloud)
+                    message = None
+                if message:
+                    try:
+                        controls.command(message, current["pose"], cloud)
+                    except ValueError as exc:
+                        controls.note = str(exc)
+                if time.monotonic() - last_status >= 0.5:
+                    active = app.WavefrontFrontierExplorer.is_exploration_active()
+                    planner = str(app.ReplanningAStarPlanner.get_state())
+                    controls.tick(planner, active)
+                    emit(state=controls.mode, message=controls.note, planner=planner,
+                         pose=current["pose"], path=current["path"] if not planner.endswith("IDLE") else None)
+                    last_status = time.monotonic()
+                elif controls.mode == "manual":
+                    controls.tick(planner, active)
+                if time.monotonic() - last_cloud >= 2 and current["cloud"] is not None and current["cloud"] is not seen_cloud:
+                    seen_cloud = current["cloud"]
+                    cloud = preview(seen_cloud)
+                    emit(cloud=cloud)
+                    save_preview(run_id, cloud)
                     last_cloud = time.monotonic()
-                STOP.wait(0.5)
+                STOP.wait(0.04)
             if not STOP.is_set():
                 emit(state="error", message="Mapping engine exited unexpectedly. Use the remote stop.")
     except Exception as exc:
@@ -162,6 +179,8 @@ def main() -> int:
             except subprocess.TimeoutExpired:
                 child.kill()
                 child.wait(timeout=5)
+        for unsubscribe in subscriptions:
+            unsubscribe()
         if app:
             app.stop()
         try:

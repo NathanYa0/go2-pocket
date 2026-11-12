@@ -540,7 +540,7 @@ export class App {
     maps.className = 'pocket-map-shortcut';
     maps.textContent = 'Map';
     maps.setAttribute('aria-label', 'Open mapping');
-    maps.addEventListener('click', () => this.mobileNavigate('mapping'));
+    maps.addEventListener('click', () => this.mobileNavigate('auto-mapping'));
     this.controlUi.appendChild(maps);
 
 

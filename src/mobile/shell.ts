@@ -13,7 +13,7 @@ export function installShell(app: App): void {
     `<button data-tab="${screen}" aria-label="${label}">${icon(screen)}<span>${label}</span></button>`).join('');
   nav.querySelectorAll<HTMLButtonElement>('button').forEach(button => button.addEventListener('click', () => {
     if (native) void Haptics.impact({ style: ImpactStyle.Light }).catch(() => {});
-    app.mobileNavigate(button.dataset.tab!);
+    app.mobileNavigate(button.dataset.tab === 'mapping' ? 'auto-mapping' : button.dataset.tab!);
   }));
   document.body.appendChild(nav);
   const banner = document.createElement('div'); banner.className = 'pocket-preview-banner';

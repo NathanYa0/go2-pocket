@@ -36,13 +36,23 @@ to the Mac mapper.
 4. **Pause movement** stops exploration while mapping stays active; **Explore** resumes.
 5. **Stop & Save** stops exploration, cancels navigation, sends StopMove, shuts down
    the mapper and verifies that the saved database has keyframes.
-6. After shutdown, **View** shows a saved 3D map; **Download** exports its `.map.db`.
+6. To fill missed areas, hold a **Drive to missed areas** button. Release to stop.
+   This cancels exploration/navigation but keeps the same mapping session running.
+   Holds are limited to ten seconds; manual packets expire after 350 ms and the
+   robot adapter's existing velocity deadman remains enabled.
+7. Drag **⚑ Drag flag to map** onto the live map (or click it, then click the map).
+   Use **Top view** for easier floor placement. Press **Go to flag** to send it to
+   the existing A* planner. It can choose a nearby safe goal or reject the route;
+   dragging alone never moves the robot. Pause movement cancels the route.
+8. After shutdown, **View** shows a saved 3D map; **Download** exports its `.map.db`.
    **Back** returns to Home, where normal Drive can reconnect.
 
 The controls drawer can collapse to leave the map full width. Drag to orbit,
-pinch/scroll to zoom, or use Fit map. The display samples at most 30,000 points;
-the database retains the mapper's full saved graph. The map is in DimOS's corrected
-map frame; raw robot odometry is deliberately not overlaid as an uncorrected pose.
+pinch/scroll to zoom, or use Fit map. The display samples at most 300,000 points;
+the database retains the mapper's full saved graph. Live clouds retain DimOS's
+robot-anchored `world` frame, matching its odometry and navigation planner. Saved
+clouds use `map` and cannot issue motion targets. Height colors use the upstream
+Turbo palette. The live robot marker and yellow planned route use the same frame.
 
 Keep this app tab open. Only its session can start/resume exploration; another
 local tab can stop it. Losing app heartbeats for 15 seconds requests a stop and
@@ -66,9 +76,9 @@ This screen currently controls mapping **on the Mac**. A standalone iPhone/Andro
 installation does not contain Python and cannot launch it. The service is loopback
 only; publishing the frontend or using `vite --host` does not expose robot control.
 Regular native Drive, camera, actions and robot-side mapping remain available.
-The older experimental browser explorer and robot USLAM workflow are retained as
-separate tools, not used by the DimOS buttons. Return-to-anchor is not wired to
-DimOS maps by this change. Saved maps can be viewed/exported; automatic resume in
+The Maps tab, Home Maps card and Drive Map button all open this combined screen.
+The older experimental browser explorer and robot USLAM workflow remain under
+Robot maps & navigation in Tools. Return-to-anchor is not wired to DimOS maps. Saved maps can be viewed/exported; automatic resume in
 an old map is not exposed because relocalization was unreliable in prior tests.
 
 The app refuses movement in `?preview=1`. Starting the server, opening the page,
@@ -105,3 +115,20 @@ The integrated engine was exercised on recorded Go2 data through cloud generatio
 and validated save. A new live supervised run is still needed to validate the
 new app-to-engine handoff with hardware. Earlier standalone DimOS trials did walk
 and turn on this Go2 Pro; those are not a substitute for testing this integration.
+
+## Operator control implementation
+
+`controls.py` switches between exploration, manual drive and flag navigation by
+first stopping exploration and canceling the old planner goal. The service rejects
+wrong-session targets, stale/released drive gestures, non-finite coordinates and
+out-of-range speeds. Flags require fresh live world-frame cloud and pose data.
+Saved-map viewing cannot issue destinations. The UI's world-to-Three conversion
+is `(x, y, z) -> (x, z, -y)`; floor flags invert it to `(scene.x, -scene.z)`.
+Map sampling affects display only, never the costmap or obstacle checks.
+
+`vendor/dimos/.venv/bin/python -m pytest integrations/dimos/test_controls.py` tests transitions, stop expiry,
+coordinate frame validation and map detail. The service tests cover released
+packets, session mismatches and invalid targets. The browser test drags a flag,
+presses Go, and exercises held/released driving with intercepted requests; no real
+robot is used. The replay test also sends a real planner goal on the replay-only
+connection. These new controls still need a supervised physical test.

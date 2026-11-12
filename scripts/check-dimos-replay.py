@@ -28,6 +28,7 @@ def read():
 threading.Thread(target=read, daemon=True).start()
 threading.Thread(target=lambda: [None for _ in p.stderr], daemon=True).start()
 cloud = None
+pose = None
 final = None
 try:
     deadline = time.monotonic() + 110
@@ -38,13 +39,32 @@ try:
             if p.poll() is not None:
                 break
             continue
+        if m.get("pose"):
+            pose = m["pose"]
         if "state" in m:
             print(m["state"], m.get("message", ""), flush=True)
         if m.get("cloud", {}).get("points"):
             cloud = m["cloud"]
+        if cloud and pose:
             break
         assert m.get("state") != "error", m
     assert cloud, "No live map cloud arrived through the bridge"
+    assert cloud["frame"] == "world", "Live navigation frame changed"
+    assert pose and pose["frame"] == "world", "No robot position overlay"
+    # All following movement requests use the replay-only connection, never hardware.
+    goal = {"command":"goal", "x":pose["position"][0]+0.25, "y":pose["position"][1]}
+    p.stdin.write(json.dumps(goal)+"\n");p.stdin.flush()
+    goal_status = None
+    deadline = time.monotonic()+5
+    while time.monotonic()<deadline:
+        m = messages.get(timeout=2)
+        assert m.get("state") != "error", m
+        if m.get("state") == "navigating" or "No usable route" in m.get("message", "") or "Destination reached" in m.get("message", ""):
+            goal_status = m
+            break
+    assert goal_status, "Goal was not processed by the planner"
+    p.stdin.write('{"command":"pause"}\n');p.stdin.flush()
+    time.sleep(0.3)
     p.stdin.write('{"command":"stop"}\n');p.stdin.flush()
     deadline = time.monotonic() + 45
     while time.monotonic() < deadline:
@@ -60,7 +80,7 @@ try:
     assert final["stopConfirmed"], final
     p.wait(timeout=10)
     assert p.returncode == 0
-    print(f"PASS: actual vendored engine → bridge → {len(cloud['points'])} preview points → validated saved map. No real robot connection.")
+    print(f"PASS: actual vendored engine → bridge → {len(cloud['points'])} preview points + live pose → planner destination → pause → validated saved map. No real robot connection.")
 finally:
     if p.poll() is None:
         p.stdin.close();p.terminate()

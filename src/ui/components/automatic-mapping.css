@@ -27,3 +27,9 @@
 .auto-map-resizer:hover,.auto-map-resizer:focus-visible { background:#b9d5ce;outline:2px solid #164e55;outline-offset:-2px; }
 .drawer-collapsed aside,.drawer-collapsed .auto-map-resizer { display:none; }
 @media(max-width:700px) { .auto-map-page h2 { font-size:16px; } .auto-map-page header { padding:8px;gap:8px; } .auto-map-page header button { padding:8px;font-size:13px; } }
+.auto-map-manual {display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.auto-map-manual button {touch-action:none;user-select:none;min-height:46px}
+.auto-map-manual button:active {background:#cee9df}
+.auto-map-goal {font-size:13px;padding:10px;background:#fff6dc;border-radius:8px}
+[data-place-flag] {touch-action:none;user-select:none}
+.auto-map-page header .auto-map-emergency {border-color:#cf4c4c;color:#a92323;background:#fff0f0}
