@@ -22,7 +22,7 @@
 .communication-panel h3 {font-size:17px; margin:0 0 3px; overflow-wrap:anywhere;}
 .communication-panel .communication-gesture-note {display:block;font-size:12px;line-height:1.35;margin-top:4px;max-width:28ch;}
 .communication-panel [data-saved] {font-size:12px; opacity:.8;}
-.communication-panel .communication-buttons {display:flex; gap:8px; flex-shrink:0;}
+.communication-panel .communication-buttons {display:flex; gap:8px; flex-shrink:0; flex-wrap:wrap; max-width:100%;}
 .communication-panel [data-play] {background:#1c5159; color:#fff; border-color:#1c5159;}
 .communication-panel .is-recording {border-color:#b13b45; background:#b13b4510;}
 .communication-panel .is-recording [data-record] {background:#a12c37; color:white; border-color:#a12c37;}
@@ -32,7 +32,7 @@
 .pocket-communication-shortcut {position:absolute;top:20px;left:max(170px,calc(env(safe-area-inset-left) + 170px));height:50px;padding:0 12px;border:1px solid var(--pocket-line);border-radius:16px;background:var(--pocket-surface);color:var(--pocket-ink);font:650 14px system-ui;z-index:20;pointer-events:auto;}
 @media (max-width:520px) {
  .communication-panel .communication-line {align-items:stretch; flex-direction:column; gap:8px; padding:12px;}
- .communication-panel .communication-buttons button {flex:1;}
+ .communication-panel .communication-buttons button {flex:1 1 80px; min-width:0;}
  .communication-panel header {padding:12px 16px;}
  .communication-panel .communication-content {padding:0 16px;}
  .communication-panel footer {padding:10px 16px;}
@@ -45,3 +45,10 @@
  .communication-panel footer {padding:8px 16px;}
  .communication-panel .communication-line {padding:10px 12px;}
 }
+
+@media (min-width:521px) and (max-width:680px) {
+ .communication-panel .communication-line {flex-direction:column; align-items:stretch;}
+ .communication-panel .communication-buttons button {flex:1; min-width:0;}
+}
+
+.communication-panel input[type=file] {display:none;}

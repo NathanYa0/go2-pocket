@@ -47,6 +47,16 @@ fixed recording slots: **Hi**, **Nice to meet you**, **Explain instructions**,
 then press the same button (**Stop & save**) to finish. **Re-record** replaces
 that slot; **Play** leaves it unchanged. Each slot is independent of Parrot.
 
+**Hi**, **Nice to meet you**, and **Explain instructions** also have an
+**Upload audio** button. Choose WAV, MP3, M4A, or another audio format supported
+by the browser. Files are converted to mono, 16 kHz, 16-bit PCM WAV before saving
+to the same slot on Go2. The converted file must fit Go2's 10 MB limit. Uploading
+replaces only that slot after confirmation; it does not play the clip or request
+a gesture. Invalid files and failed uploads keep the previous clip. The original
+filename is not used as the library slot name. File-picker cancellation keeps
+the current clip. Uploaded files retain their level; the recording-only 5× gain
+and noise reduction are not applied to file uploads.
+
 Capture uses Go2's incoming WebRTC microphone, with the same noise reduction
 and 5× gain as Parrot. The phone/computer microphone is never requested. Pause
 briefly before speaking while the noise filter initializes. Recording does not

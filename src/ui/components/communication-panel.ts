@@ -8,12 +8,13 @@ export function openCommunicationPanel(controller: Communication, preview = fals
   dialog.innerHTML = `<header><div><h2 id="communication-title">Communication</h2><p>Saved voices, a friendly greeting.</p></div><button type="button" data-close aria-label="Close Communication">Close</button></header>
     <div class="communication-tools" role="group" aria-label="Audio controls"><button type="button" data-stop>Stop audio</button></div>
     <div class="communication-content">
-      <p class="communication-help">Record with Go2’s microphone; play through its speaker. Pause briefly before speaking. Press Record again to stop and save. Re-record replaces only that line. Recordings also save automatically at 55 seconds.</p>
+      <p class="communication-help">Record on Go2: press again to stop and save (55s maximum). Pause briefly before speaking. Or upload WAV, MP3 or M4A. Recording or uploading replaces only that line.</p>
       <div class="communication-lines"></div>
       <p class="communication-help">Nice to meet you requests Go2’s standard paw greeting. Go2 lowers its paw automatically after this gesture.</p>
     </div>
     <footer><p role="status" aria-live="polite"></p></footer>`;
   const lines = dialog.querySelector<HTMLElement>('.communication-lines')!;
+  let pickingFile = false;
   const rows = VOICE_SLOTS.map(slot => {
     const row = document.createElement('section');
     row.className = 'communication-line';
@@ -31,8 +32,27 @@ export function openCommunicationPanel(controller: Communication, preview = fals
     play.setAttribute('aria-label', `Play ${slot.label}${slot.key === 'nice' ? ' and offer paw' : ''}`);
     play.onclick = () => { void controller.play(slot.key); };
     record.onclick = () => { void controller.toggleRecord(slot.key); };
+    let upload: HTMLButtonElement | undefined;
+    if (slot.key === 'hi' || slot.key === 'nice' || slot.key === 'guide') {
+      const input = document.createElement('input');
+      input.type = 'file'; input.accept = 'audio/*,.wav,.mp3,.m4a,.ogg,.flac,.aac'; input.hidden = true;
+      input.setAttribute('aria-label', `Audio file for ${slot.label}`);
+      upload = document.createElement('button'); upload.type = 'button';
+      upload.textContent = 'Upload audio'; upload.setAttribute('aria-label', `Upload audio for ${slot.label}`);
+      upload.onclick = () => {
+        input.value = ''; pickingFile = true;
+        input.click();
+      };
+      input.onchange = () => {
+        pickingFile = false;
+        const file = input.files?.[0];
+        if (file) void controller.uploadFile(slot.key, file);
+      };
+      input.addEventListener('cancel', () => { pickingFile = false; });
+      row.querySelector('.communication-buttons')!.append(upload, input);
+    }
     lines.appendChild(row);
-    return { slot, row, play, record, saved: row.querySelector<HTMLElement>('[data-saved]')! };
+    return { slot, row, play, record, upload, saved: row.querySelector<HTMLElement>('[data-saved]')! };
   });
   const status = dialog.querySelector<HTMLElement>('[role=status]')!;
   const stop = dialog.querySelector<HTMLButtonElement>('[data-stop]')!;
@@ -45,7 +65,7 @@ export function openCommunicationPanel(controller: Communication, preview = fals
     window.removeEventListener('pagehide', close);
     dialog.close(); dialog.remove();
   };
-  const hidden = () => { if (document.hidden) close(); };
+  const hidden = () => { if (document.hidden && !pickingFile) close(); };
   document.addEventListener('visibilitychange', hidden);
   window.addEventListener('pagehide', close);
   dialog.querySelector<HTMLButtonElement>('[data-close]')!.onclick = close;
@@ -53,12 +73,13 @@ export function openCommunicationPanel(controller: Communication, preview = fals
   const render = (state: CommunicationState) => {
     if (removed) return;
     status.textContent = preview ? 'Preview only. Connect to Go2 to record and play your voice lines.' : state.message;
-    for (const { slot, row, play, record, saved } of rows) {
+    for (const { slot, row, play, record, upload, saved } of rows) {
       const active = state.slot === slot.key && (state.phase === 'recording' || state.phase === 'starting');
       const hasClip = !!state.clips[slot.key];
       row.classList.toggle('is-recording', active);
       saved.textContent = active ? '● Recording' : hasClip ? 'Saved on Go2' : 'Not recorded yet';
       play.disabled = preview || state.phase !== 'idle' || !hasClip;
+      if (upload) upload.disabled = preview || state.phase !== 'idle';
       record.disabled = preview || (!active && state.phase !== 'idle');
       record.textContent = active ? 'Stop & save' : hasClip ? 'Re-record' : 'Record';
       record.setAttribute('aria-label', `${active ? 'Stop and save' : hasClip ? 'Re-record' : 'Record'} ${slot.label}`);

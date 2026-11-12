@@ -8,7 +8,7 @@ function fixture(overrides={}) {
  let files=[{UNIQUE_ID:'old',CUSTOM_NAME:oldName},{UNIQUE_ID:'nice',CUSTOM_NAME:'Comm nice 1700000000000-abcdef.wav'},{UNIQUE_ID:'other',CUSTOM_NAME:'Parrot 1700000000000-abc'}];
  let id=0;
  const recorder={start:async()=>events.push('start'),stop:async()=>{events.push('stop');return new ArrayBuffer(100);},destroy:()=>events.push('destroy')};
- const opts={available:()=>true,recorder:()=>recorder,offerPaw:()=>events.push('paw'),state:s=>states.push(s),
+ const opts={available:()=>true,convertFile:async()=>new ArrayBuffer(100),recorder:()=>recorder,offerPaw:()=>events.push('paw'),state:s=>states.push(s),
  request:async(api,payload)=>{const data=JSON.parse(payload);events.push([api,data]);if(api===1001)return {audio_list:files};if(api===1010)return{play_mode:'list_loop'};if(api===1009)files=files.filter(f=>f.UNIQUE_ID!==data.unique_id);return {};},
  upload:async(wav,name,check)=>{check();events.push('upload');files.push({UNIQUE_ID:`new${++id}`,CUSTOM_NAME:name});},...overrides};
  const c=new Communication(opts);return{c,events,states,opts,recorder,get files(){return files;}};
@@ -58,5 +58,38 @@ await test('55-second cap saves instead of losing the recording',async()=>{
  const original=globalThis.setTimeout;let deadline;
  globalThis.setTimeout=(fn,ms)=>{assert.equal(ms,55000);deadline=fn;return 0;};
  try{const f=fixture();await f.c.load();await f.c.toggleRecord('line2');deadline();await flush();assert.ok(f.c.state.clips.line2);await f.c.close();}finally{globalThis.setTimeout=original;}
+});
+await test('file uploads replace only their slot and never play, record or offer a paw',async()=>{
+ const f=fixture();await f.c.load();
+ for(const slot of ['hi','nice','guide']) {
+  await f.c.uploadFile(slot,{size:100});
+  assert.ok(f.c.state.clips[slot].UNIQUE_ID.startsWith('new'));
+ }
+ assert.deepEqual(requests(f,1009).map(e=>e[1].unique_id),['old','nice']);
+ assert.ok(f.files.some(file=>file.UNIQUE_ID==='other'));
+ assert.equal(requests(f,1002).length,0);assert.ok(!f.events.includes('paw'));assert.ok(!f.events.includes('start'));
+ assert.equal(communicationClips(f.files).guide.UNIQUE_ID,f.c.state.clips.guide.UNIQUE_ID);
+ await f.c.close();
+});
+await test('bad, empty, oversized or failed uploads preserve the previous clip',async()=>{
+ for(const overrides of [
+  {convertFile:async()=>{throw Error('decode failed');}},
+  {convertFile:async()=>new ArrayBuffer(44)},
+  {convertFile:async()=>new ArrayBuffer(10*1024*1024+1)},
+  {upload:async()=>{throw Error('upload failed');}}
+ ]) {
+  const f=fixture(overrides);await f.c.load();await f.c.uploadFile('hi',{size:100});
+  assert.equal(f.c.state.clips.hi.UNIQUE_ID,'old');assert.equal(requests(f,1009).length,0);assert.equal(f.c.state.phase,'idle');await f.c.close();
+ }
+ const f=fixture();await f.c.load();await f.c.uploadFile('hi',{size:0});assert.match(f.c.state.message,/empty/);assert.ok(!f.events.includes('upload'));await f.c.close();
+});
+await test('upload respects library capacity and cancellation during conversion',async()=>{
+ const f=fixture();while(f.files.length<10)f.files.push({UNIQUE_ID:`extra${f.files.length}`,CUSTOM_NAME:'Other'});
+ await f.c.load();await f.c.uploadFile('hi',{size:100});assert.match(f.c.state.message,/full/);assert.ok(!f.events.includes('upload'));await f.c.close();
+ let release;
+ const g=fixture({convertFile:()=>new Promise(r=>release=r)});await g.c.load();const upload=g.c.uploadFile('hi',{size:100});await flush();
+ await g.c.toggleRecord('nice');assert.ok(!g.events.includes('start'));
+ const closing=g.c.close();release(new ArrayBuffer(100));await upload;await closing;
+ assert.ok(!g.events.includes('upload'));assert.equal(requests(g,1009).length,0);
 });
 console.log(`${count} Communication checks passed; no robot connected.`);

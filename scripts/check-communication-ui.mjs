@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { mkdir } from 'node:fs/promises';
+const wav = Buffer.alloc(44+32000);
+wav.write('RIFF',0);wav.writeUInt32LE(wav.length-8,4);wav.write('WAVEfmt ',8);
+wav.writeUInt32LE(16,16);wav.writeUInt16LE(1,20);wav.writeUInt16LE(1,22);
+wav.writeUInt32LE(16000,24);wav.writeUInt32LE(32000,28);wav.writeUInt16LE(2,32);wav.writeUInt16LE(16,34);
+wav.write('data',36);wav.writeUInt32LE(32000,40);
+for(let i=0;i<16000;i++)wav.writeInt16LE(Math.round(5000*Math.sin(i*2*Math.PI*440/16000)),44+i*2);
 const browser=await chromium.launch({channel:'chrome',headless:true});
 await mkdir('output/communication-ui',{recursive:true});
 try {
@@ -20,9 +26,9 @@ try {
   await page.getByRole('button',{name:'Close Communication'}).click();
   // Exercise the real component with an in-memory robot library. No network or hardware requests.
   await page.evaluate(async()=>{
-   const {Communication}=await import('/src/ui/communication.ts');const {openCommunicationPanel}=await import('/src/ui/components/communication-panel.ts');
+   const {Communication}=await import('/src/ui/communication.ts');const {convertFileToWav}=await import('/src/ui/audio-recorder.ts');const {openCommunicationPanel}=await import('/src/ui/components/communication-panel.ts');
    window.events=[];let files=[];let id=0;let panel;
-   const c=window.communication=new Communication({available:()=>true,
+   const c=window.communication=new Communication({available:()=>true,convertFile:convertFileToWav,
     recorder:()=>({start:async()=>window.events.push('record'),stop:async()=>new ArrayBuffer(100),destroy:()=>window.events.push('destroy')}),
     request:async(api,payload)=>{const data=JSON.parse(payload);window.events.push([api,data]);if(api===1001)return {audio_list:files};if(api===1010)return{play_mode:'list_loop'};if(api===1009)files=files.filter(x=>x.UNIQUE_ID!==data.unique_id);return {};},
     upload:async(wav,name)=>{files.push({UNIQUE_ID:String(++id),CUSTOM_NAME:name});},offerPaw:()=>window.events.push('paw'),state:s=>panel?.render(s)});
@@ -47,6 +53,25 @@ try {
   await page.getByRole('button',{name:'Stop and save Hi',exact:true}).click();
   await page.waitForFunction(()=>window.communication.state.phase==='idle');
   assert.equal(await page.evaluate(()=>window.events.filter(e=>Array.isArray(e)&&e[0]===1009).length),1);
+  assert.equal(await page.getByRole('button',{name:/Upload audio for/}).count(),3);
+  const beforeUpload=await page.evaluate(()=>({plays:window.events.filter(e=>Array.isArray(e)&&e[0]===1002).length,paws:window.events.filter(e=>e==='paw').length}));
+  for(const label of ['Hi','Nice to meet you','Explain instructions','Hi']) {
+   const chooser=page.waitForEvent('filechooser');
+   await page.getByRole('button',{name:`Upload audio for ${label}`,exact:true}).click();
+   await (await chooser).setFiles({name:'greeting.wav',mimeType:'audio/wav',buffer:wav});
+   await page.waitForFunction(()=>window.communication.state.phase==='idle');
+   assert.match(await page.locator('.communication-panel [role=status]').innerText(),/Voice saved on Go2/);
+  }
+  const afterUpload=await page.evaluate(()=>({plays:window.events.filter(e=>Array.isArray(e)&&e[0]===1002).length,paws:window.events.filter(e=>e==='paw').length}));
+  assert.deepEqual(afterUpload,beforeUpload,'Uploads must not play audio or move Go2');
+  const savedId=await page.evaluate(()=>window.communication.state.clips.hi.UNIQUE_ID);
+  await page.getByLabel('Audio file for Hi',{exact:true}).setInputFiles({name:'broken.mp3',mimeType:'audio/mpeg',buffer:Buffer.from('not audio')});
+  await page.waitForFunction(()=>window.communication.state.phase==='idle');
+  assert.match(await page.locator('.communication-panel [role=status]').innerText(),/Could not read/);
+  assert.equal(await page.evaluate(()=>window.communication.state.clips.hi.UNIQUE_ID),savedId);
+  await page.getByLabel('Audio file for Hi',{exact:true}).setInputFiles([]);
+  assert.equal(await page.evaluate(()=>window.communication.state.clips.hi.UNIQUE_ID),savedId,'Cancelling the picker keeps the clip');
+  await page.evaluate(()=>window.communication.load());
   const bounds=await page.locator('.communication-panel').boundingBox();
   assert.ok(bounds.x>=0&&bounds.y>=0&&bounds.x+bounds.width<=size.width+1&&bounds.y+bounds.height<=size.height+1);
   assert.ok(await page.locator('.communication-panel').evaluate(el=>el.scrollWidth<=el.clientWidth+1));

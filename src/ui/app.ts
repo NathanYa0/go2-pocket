@@ -2472,6 +2472,7 @@ export class App {
       let panel: ReturnType<typeof openCommunicationPanel> | undefined;
       this.communication = new Communication({
         available,
+        convertFile: convertFileToWav,
         request: (api, payload) => {
           if (!handler || handler !== this.dataHandler) return Promise.reject(new Error('Go2 is disconnected.'));
           return this.publishAudioRequest(api, payload, true);

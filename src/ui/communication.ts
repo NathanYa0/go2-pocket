@@ -25,6 +25,7 @@ interface Options {
   request(api: number, payload: string): Promise<unknown>;
   upload(wav: ArrayBuffer, name: string, check: () => void): Promise<void>;
   recorder(): Recorder;
+  convertFile(file: File): Promise<ArrayBuffer>;
   offerPaw(): void;
   state(state: CommunicationState): void;
 }
@@ -76,7 +77,7 @@ export class Communication {
   load(): Promise<void> {
     return this.run(async () => {
       this.state.clips = communicationClips(parseAudioList(await this.request(1001)));
-      this.update('idle', 'Record each line once. Play keeps the recording unchanged.');
+      this.update('idle', 'Record or upload a voice line once. Play keeps it unchanged.');
     });
   }
   private async stopAudio(): Promise<void> {
@@ -97,7 +98,7 @@ export class Communication {
       // Refresh IDs in case another device replaced a recording.
       this.state.clips = communicationClips(parseAudioList(await this.request(1001)));
       const clip = this.state.clips[slot];
-      if (!clip) throw new Error('Record this voice line first.');
+      if (!clip) throw new Error('Record or upload this voice line first.');
       await this.stopAudio(); await this.singlePlayback();
       await this.request(1002, JSON.stringify({ unique_id: clip.UNIQUE_ID }));
       this.check();
@@ -111,6 +112,23 @@ export class Communication {
     if (this.state.phase !== 'idle' || this.closed) return Promise.resolve();
     this.update('working', 'Stopping audio…');
     return this.run(async () => { await this.stopAudio(); this.update('idle', 'Audio stopped.'); });
+  }
+  uploadFile(slot: VoiceSlot, file: File): Promise<void> {
+    if (this.state.phase !== 'idle' || this.closed) return Promise.resolve();
+    this.update('working', 'Converting audio file…', slot);
+    return this.run(async () => {
+      this.check();
+      if (!file.size) throw new Error('This file is empty. Previous voice kept.');
+      const files = parseAudioList(await this.request(1001));
+      if (files.length >= 10) throw new Error('Go2’s library is full. Free one slot in Sound & voice first. Your current recording is kept.');
+      let wav: ArrayBuffer;
+      try { wav = await this.options.convertFile(file); }
+      catch { throw new Error('Could not read this audio file. Try WAV, MP3 or M4A supported by your browser. Previous voice kept.'); }
+      this.check();
+      if (wav.byteLength <= 44) throw new Error('The file contains no usable audio. Previous voice kept.');
+      await this.stopAudio();
+      await this.saveVoice(slot, wav);
+    });
   }
   toggleRecord(slot: VoiceSlot): Promise<void> {
     if (this.closed) return Promise.resolve();
@@ -146,7 +164,15 @@ export class Communication {
     const wav = await recorder?.stop();
     recorder?.destroy(); this.recorder = null; this.check();
     if (!wav || wav.byteLength <= 44) throw new Error('No usable audio recorded. Speak for at least half a second. Previous voice kept.');
-    const old = slotFiles(parseAudioList(await this.request(1001)), slot);
+    await this.saveVoice(slot, wav);
+  }
+  private async saveVoice(slot: VoiceSlot, wav: ArrayBuffer): Promise<void> {
+    this.check();
+    if (wav.byteLength > 10 * 1024 * 1024) throw new Error('Converted audio exceeds Go2’s 10 MB limit. Choose a shorter clip. Previous voice kept.');
+    this.update('saving', 'Saving voice line to Go2…', slot);
+    const before = parseAudioList(await this.request(1001));
+    if (before.length >= 10) throw new Error('Go2’s library is full. Free one slot in Sound & voice first. Your current recording is kept.');
+    const old = slotFiles(before, slot);
     const name = `Comm ${slot} ${Date.now()}-${Math.floor(Math.random() * 0x1000000).toString(16).padStart(6, '0')}`;
     await this.options.upload(wav, name, this.check); this.check();
     const files = parseAudioList(await this.request(1001));
@@ -160,7 +186,7 @@ export class Communication {
       catch { cleanupFailed = true; }
     }
     this.check();
-    this.update('idle', cleanupFailed ? 'New voice saved. An old copy could not be removed.' : 'Voice saved on Go2. It stays the same until you re-record this slot.');
+    this.update('idle', cleanupFailed ? 'New voice saved. An old copy could not be removed.' : 'Voice saved on Go2. It stays the same until you re-record or upload a replacement.');
   }
   /** Cancel capture immediately; wait for in-flight replies before stopping/restoring audio. */
   close(): Promise<void> {
