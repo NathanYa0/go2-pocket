@@ -6,11 +6,11 @@ export function openCommunicationPanel(controller: Communication, preview = fals
   dialog.className = 'communication-panel';
   dialog.setAttribute('aria-labelledby', 'communication-title');
   dialog.innerHTML = `<header><div><h2 id="communication-title">Communication</h2><p>Saved voices, a friendly greeting.</p></div><button type="button" data-close aria-label="Close Communication">Close</button></header>
-    <div class="communication-tools" role="group" aria-label="Paw and audio controls"><button type="button" data-down>Lower paw</button><button type="button" data-stop>Stop audio</button></div>
+    <div class="communication-tools" role="group" aria-label="Audio controls"><button type="button" data-stop>Stop audio</button></div>
     <div class="communication-content">
       <p class="communication-help">Record with Go2’s microphone; play through its speaker. Pause briefly before speaking. Press Record again to stop and save. Re-record replaces only that line. Recordings also save automatically at 55 seconds.</p>
       <div class="communication-lines"></div>
-      <p class="communication-help">Nice to meet you requests Go2’s standard paw greeting. Go2 lowers its paw automatically after this gesture. Keeping it raised until Lower paw is pressed is not implemented.</p>
+      <p class="communication-help">Nice to meet you requests Go2’s standard paw greeting. Go2 lowers its paw automatically after this gesture.</p>
     </div>
     <footer><p role="status" aria-live="polite"></p></footer>`;
   const lines = dialog.querySelector<HTMLElement>('.communication-lines')!;
@@ -35,9 +35,7 @@ export function openCommunicationPanel(controller: Communication, preview = fals
     return { slot, row, play, record, saved: row.querySelector<HTMLElement>('[data-saved]')! };
   });
   const status = dialog.querySelector<HTMLElement>('[role=status]')!;
-  const down = dialog.querySelector<HTMLButtonElement>('[data-down]')!;
   const stop = dialog.querySelector<HTMLButtonElement>('[data-stop]')!;
-  down.onclick = () => controller.pawDown();
   stop.onclick = () => { void controller.stopPlayback(); };
   let removed = false;
   const close = () => {
@@ -67,7 +65,6 @@ export function openCommunicationPanel(controller: Communication, preview = fals
       record.setAttribute('aria-pressed', String(active));
     }
     stop.disabled = preview || state.phase !== 'idle';
-    down.disabled = preview || state.phase === 'closed';
   };
   document.body.appendChild(dialog); render(controller.state); dialog.showModal();
   if (!preview) void controller.load();

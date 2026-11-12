@@ -26,7 +26,6 @@ interface Options {
   upload(wav: ArrayBuffer, name: string, check: () => void): Promise<void>;
   recorder(): Recorder;
   offerPaw(): void;
-  lowerPaw(): void;
   state(state: CommunicationState): void;
 }
 
@@ -50,7 +49,6 @@ export class Communication {
   private deadline?: ReturnType<typeof setTimeout>;
   private previousLoop: LoopMode | null = null;
   private touchedAudio = false;
-  private gestureEpoch = 0;
   private closeTask?: Promise<void>;
   constructor(private options: Options) {}
 
@@ -94,7 +92,6 @@ export class Communication {
   }
   play(slot: VoiceSlot): Promise<void> {
     if (this.state.phase !== 'idle' || this.closed) return Promise.resolve();
-    const epoch = this.gestureEpoch;
     this.update('working', 'Preparing playback…', slot);
     return this.run(async () => {
       // Refresh IDs in case another device replaced a recording.
@@ -104,9 +101,9 @@ export class Communication {
       await this.stopAudio(); await this.singlePlayback();
       await this.request(1002, JSON.stringify({ unique_id: clip.UNIQUE_ID }));
       this.check();
-      if (slot === 'nice' && epoch === this.gestureEpoch) this.options.offerPaw();
-      this.update('idle', slot === 'nice' && epoch === this.gestureEpoch
-        ? 'Greeting playback and paw request sent. Use Lower paw to request a standing pose.'
+      if (slot === 'nice') this.options.offerPaw();
+      this.update('idle', slot === 'nice'
+        ? 'Greeting playback and paw request sent. Go2 lowers its paw automatically.'
         : 'Playback requested. The saved voice line stays unchanged.');
     });
   }
@@ -114,15 +111,6 @@ export class Communication {
     if (this.state.phase !== 'idle' || this.closed) return Promise.resolve();
     this.update('working', 'Stopping audio…');
     return this.run(async () => { await this.stopAudio(); this.update('idle', 'Audio stopped.'); });
-  }
-  pawDown(): void {
-    ++this.gestureEpoch; // A delayed greeting response must not raise it again.
-    try {
-      this.check(); this.options.lowerPaw();
-      this.update(this.state.phase, 'Lower-paw request sent.', this.state.slot);
-    } catch (error) {
-      this.update(this.state.phase, error instanceof Error ? error.message : 'Could not request Lower paw.', this.state.slot);
-    }
   }
   toggleRecord(slot: VoiceSlot): Promise<void> {
     if (this.closed) return Promise.resolve();
@@ -177,7 +165,7 @@ export class Communication {
   /** Cancel capture immediately; wait for in-flight replies before stopping/restoring audio. */
   close(): Promise<void> {
     if (this.closeTask) return this.closeTask;
-    this.closed = true; ++this.gestureEpoch;
+    this.closed = true;
     clearTimeout(this.deadline); this.recorder?.destroy(); this.recorder = null;
     const pending = this.task;
     this.closeTask = (async () => {

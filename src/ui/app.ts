@@ -2489,11 +2489,6 @@ export class App {
           const id = this.publishRequestLogged(RTC_TOPIC.SPORT_MOD, SPORT_CMD.Hello, '{}', { label: 'Communication / offer paw' });
           if (id === undefined) throw new Error('Could not send the paw greeting.');
         },
-        lowerPaw: () => {
-          if (!available()) throw new Error('Connect to Go2 before requesting Paw down.');
-          const id = this.publishRequestLogged(RTC_TOPIC.SPORT_MOD, SPORT_CMD.BalanceStand, '{}', { label: 'Communication / paw down (balanced stand)' });
-          if (id === undefined) throw new Error('Could not send Paw down.');
-        },
         state: state => panel?.render(state),
       });
       panel = openCommunicationPanel(this.communication, preview);

@@ -25,7 +25,7 @@ try {
    const c=window.communication=new Communication({available:()=>true,
     recorder:()=>({start:async()=>window.events.push('record'),stop:async()=>new ArrayBuffer(100),destroy:()=>window.events.push('destroy')}),
     request:async(api,payload)=>{const data=JSON.parse(payload);window.events.push([api,data]);if(api===1001)return {audio_list:files};if(api===1010)return{play_mode:'list_loop'};if(api===1009)files=files.filter(x=>x.UNIQUE_ID!==data.unique_id);return {};},
-    upload:async(wav,name)=>{files.push({UNIQUE_ID:String(++id),CUSTOM_NAME:name});},offerPaw:()=>window.events.push('paw'),lowerPaw:()=>window.events.push('down'),state:s=>panel?.render(s)});
+    upload:async(wav,name)=>{files.push({UNIQUE_ID:String(++id),CUSTOM_NAME:name});},offerPaw:()=>window.events.push('paw'),state:s=>panel?.render(s)});
    panel=openCommunicationPanel(c);
   });
   await page.getByRole('button',{name:'Record Hi',exact:true}).click();
@@ -36,8 +36,8 @@ try {
   await page.getByRole('button',{name:'Stop and save Nice to meet you',exact:true}).click();
   await page.getByRole('button',{name:'Play Nice to meet you and offer paw',exact:true}).click();
   await page.waitForFunction(()=>window.events.includes('paw'));
-  await page.getByRole('button',{name:'Lower paw',exact:true}).click();
-  assert.ok(await page.evaluate(()=>window.events.includes('down')));
+  assert.equal(await page.locator('[data-down]').count(),0);
+  await page.getByRole('button',{name:'Stop audio',exact:true}).click();
   await page.getByRole('button',{name:'Record Explain instructions',exact:true}).click();
   await page.getByRole('button',{name:'Stop and save Explain instructions',exact:true}).click();
   await page.getByRole('button',{name:'Play Explain instructions',exact:true}).click();
@@ -51,13 +51,13 @@ try {
   assert.ok(bounds.x>=0&&bounds.y>=0&&bounds.x+bounds.width<=size.width+1&&bounds.y+bounds.height<=size.height+1);
   assert.ok(await page.locator('.communication-panel').evaluate(el=>el.scrollWidth<=el.clientWidth+1));
   const buttons=await page.locator('.communication-panel .communication-tools').boundingBox();
-  assert.ok(buttons.y>=0&&buttons.y+buttons.height<=size.height,'Lower paw and Stop audio stay visible');
+  assert.ok(buttons.y>=0&&buttons.y+buttons.height<=size.height,'Stop audio stays visible');
   const content=await page.locator('.communication-content').boundingBox();
-  assert.ok(buttons.y+buttons.height<=content.y+1,'Lower paw is above the scrolling recordings');
+  assert.ok(buttons.y+buttons.height<=content.y+1,'Stop audio is above the scrolling recordings');
   for(const scroll of [0,100000]) {
    await page.locator('.communication-content').evaluate((el,y)=>el.scrollTop=y,scroll);
-   const reachable=await page.locator('[data-down]').evaluate(el=>{const r=el.getBoundingClientRect();return el===document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);});
-   assert.ok(reachable,'Lower paw remains clickable at either end of the list');
+   const reachable=await page.locator('[data-stop]').evaluate(el=>{const r=el.getBoundingClientRect();return el===document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);});
+   assert.ok(reachable,'Stop audio remains clickable at either end of the list');
   }
   await page.locator('.communication-content').evaluate(el=>el.scrollTop=0);
   await page.screenshot({path:`output/communication-ui/${size.width}x${size.height}.png`});

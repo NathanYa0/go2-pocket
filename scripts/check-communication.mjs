@@ -8,7 +8,7 @@ function fixture(overrides={}) {
  let files=[{UNIQUE_ID:'old',CUSTOM_NAME:oldName},{UNIQUE_ID:'nice',CUSTOM_NAME:'Comm nice 1700000000000-abcdef.wav'},{UNIQUE_ID:'other',CUSTOM_NAME:'Parrot 1700000000000-abc'}];
  let id=0;
  const recorder={start:async()=>events.push('start'),stop:async()=>{events.push('stop');return new ArrayBuffer(100);},destroy:()=>events.push('destroy')};
- const opts={available:()=>true,recorder:()=>recorder,offerPaw:()=>events.push('paw'),lowerPaw:()=>events.push('down'),state:s=>states.push(s),
+ const opts={available:()=>true,recorder:()=>recorder,offerPaw:()=>events.push('paw'),state:s=>states.push(s),
  request:async(api,payload)=>{const data=JSON.parse(payload);events.push([api,data]);if(api===1001)return {audio_list:files};if(api===1010)return{play_mode:'list_loop'};if(api===1009)files=files.filter(f=>f.UNIQUE_ID!==data.unique_id);return {};},
  upload:async(wav,name,check)=>{check();events.push('upload');files.push({UNIQUE_ID:`new${++id}`,CUSTOM_NAME:name});},...overrides};
  const c=new Communication(opts);return{c,events,states,opts,recorder,get files(){return files;}};
@@ -29,7 +29,7 @@ await test('toggle captures once, confirms replacement before deletion, recovers
 await test('play never changes recordings; only nice requests paw; restores loop',async()=>{
  const f=fixture();await f.c.load();await f.c.play('hi');assert.ok(!f.events.includes('paw'));await f.c.play('nice');
  assert.equal(f.events.filter(e=>e==='paw').length,1);assert.equal(requests(f,1009).length,0);assert.ok(!f.events.includes('upload'));
- f.c.pawDown();assert.ok(f.events.includes('down'));await f.c.close();assert.equal(requests(f,1007).at(-1)[1].play_mode,'list_loop');
+ await f.c.close();assert.equal(requests(f,1007).at(-1)[1].play_mode,'list_loop');
 });
 await test('failed upload keeps old voice',async()=>{
  const f=fixture({upload:async()=>{throw Error('Upload failed');}});await f.c.load();await f.c.toggleRecord('hi');await f.c.toggleRecord('hi');
@@ -48,11 +48,11 @@ await test('second press during startup stops after startup, without overlapping
  const f=fixture();let release;f.recorder.start=()=>new Promise(r=>release=r);await f.c.load();const start=f.c.toggleRecord('line1');await flush();void f.c.toggleRecord('line1');release();await start;
  assert.equal(f.c.state.phase,'idle');assert.ok(f.c.state.clips.line1);await f.c.close();
 });
-await test('paw down suppresses a delayed greeting and disconnected controls do nothing',async()=>{
+await test('closing suppresses a delayed greeting and disconnected controls do nothing',async()=>{
  const f=fixture();await f.c.load();const original=f.opts.request;let release;
  f.opts.request=async(api,payload)=>{if(api===1002)await new Promise(r=>release=r);return original(api,payload);};
- const play=f.c.play('nice');await flush();f.c.pawDown();release();await play;assert.ok(!f.events.includes('paw'));assert.ok(f.events.includes('down'));
- f.opts.available=()=>false;await f.c.play('nice');f.c.pawDown();assert.equal(f.events.filter(x=>x==='down').length,1);await f.c.close();
+ const play=f.c.play('nice');await flush();const closing=f.c.close();release();await play;await closing;assert.ok(!f.events.includes('paw'));
+ const g=fixture({available:()=>false});await g.c.load();await g.c.play('nice');assert.ok(!g.events.includes('paw'));await g.c.close();
 });
 await test('55-second cap saves instead of losing the recording',async()=>{
  const original=globalThis.setTimeout;let deadline;

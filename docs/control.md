@@ -64,14 +64,12 @@ full, remove an unused clip through **More → Sound & voice** first. Renaming a
 Communication clip outside this panel removes its slot association.
 
 **Play + offer paw** plays the saved Nice to meet you line once and requests the
-existing `Hello` / Shake Hand action (sport API 1016). **Lower paw**, pinned directly below the panel title, requests
-`BalanceStand` (1002) independently of playback. These IDs and parameter-free
-calls follow [Unitree's SportClient](https://github.com/unitreerobotics/unitree_sdk2_python/blob/master/unitree_sdk2py/go2/sport/sport_client.py).
+existing `Hello` / Shake Hand action (sport API 1016). This parameter-free
+call follows [Unitree's SportClient](https://github.com/unitreerobotics/unitree_sdk2_python/blob/master/unitree_sdk2py/go2/sport/sport_client.py).
 There is no documented hold-paw parameter: the robot controls the gesture's
 animation. The user’s live test confirmed that the standard greeting lowers the
-paw automatically. Holding it until Lower paw is pressed is not implemented.
-Paw-down interruption and timing
-still need a supervised test on this Go2. The separate API 1029 guard is unchanged.
+paw automatically. Holding the paw raised is not implemented. The Lower paw
+button was removed at the user’s request. The separate API 1029 guard is unchanged.
 A sent request is not confirmation that the physical gesture completed.
 
 Paw-hold investigation (2026-11-12): the app sends a single `Hello` request;
