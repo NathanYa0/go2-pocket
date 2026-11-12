@@ -1,0 +1,195 @@
+import { parseAudioList, parsePlayMode, type LoopMode } from './components/audio-player';
+
+export const VOICE_SLOTS = [
+  { key: 'hi', label: 'Hi' },
+  { key: 'nice', label: 'Nice to meet you' },
+  { key: 'guide', label: 'Explain instructions' },
+  { key: 'line1', label: 'Voice line 1' },
+  { key: 'line2', label: 'Voice line 2' },
+] as const;
+export type VoiceSlot = typeof VOICE_SLOTS[number]['key'];
+type AudioFile = ReturnType<typeof parseAudioList>[number];
+export interface CommunicationState {
+  phase: 'loading' | 'idle' | 'starting' | 'recording' | 'saving' | 'working' | 'closed';
+  slot?: VoiceSlot;
+  clips: Partial<Record<VoiceSlot, AudioFile>>;
+  message: string;
+}
+interface Recorder {
+  start(): Promise<void>;
+  stop(): Promise<ArrayBuffer | null>;
+  destroy(): void;
+}
+interface Options {
+  available(): boolean;
+  request(api: number, payload: string): Promise<unknown>;
+  upload(wav: ArrayBuffer, name: string, check: () => void): Promise<void>;
+  recorder(): Recorder;
+  offerPaw(): void;
+  lowerPaw(): void;
+  state(state: CommunicationState): void;
+}
+
+// Names live on Go2, so another phone/computer can recover the same slots.
+// Version each replacement; never delete the previous voice before confirming upload.
+function slotFiles(files: AudioFile[], slot: VoiceSlot): AudioFile[] {
+  const pattern = new RegExp(`^Comm ${slot} (\\d{13})-[a-f0-9]{6}(?:\\.wav)?$`);
+  return files.filter(file => file.UNIQUE_ID && pattern.test(file.CUSTOM_NAME))
+    .sort((a, b) => Number(b.CUSTOM_NAME.match(pattern)![1]) - Number(a.CUSTOM_NAME.match(pattern)![1]));
+}
+export function communicationClips(files: AudioFile[]): CommunicationState['clips'] {
+  return Object.fromEntries(VOICE_SLOTS.map(slot => [slot.key, slotFiles(files, slot.key)[0]]));
+}
+
+export class Communication {
+  state: CommunicationState = { phase: 'loading', clips: {}, message: 'Loading saved voice lines…' };
+  private recorder: Recorder | null = null;
+  private task: Promise<void> = Promise.resolve();
+  private closed = false;
+  private stoppingEarly = false;
+  private deadline?: ReturnType<typeof setTimeout>;
+  private previousLoop: LoopMode | null = null;
+  private touchedAudio = false;
+  private gestureEpoch = 0;
+  private closeTask?: Promise<void>;
+  constructor(private options: Options) {}
+
+  private update(phase: CommunicationState['phase'], message: string, slot?: VoiceSlot): void {
+    this.state = { ...this.state, phase, message, slot };
+    if (!this.closed) this.options.state(this.state);
+  }
+  private check = (): void => {
+    if (this.closed) throw new Error('Communication closed.');
+    if (!this.options.available()) throw new Error('Connect to Go2 to use Communication.');
+  };
+  private async request(api: number, payload = '{}'): Promise<unknown> {
+    this.check();
+    const response = await this.options.request(api, payload);
+    this.check(); return response;
+  }
+  private run(work: () => Promise<void>): Promise<void> {
+    this.task = work().catch(error => {
+      this.recorder?.destroy(); this.recorder = null;
+      clearTimeout(this.deadline);
+      this.update('idle', error instanceof Error ? error.message : 'Could not complete this action.');
+    });
+    return this.task;
+  }
+  load(): Promise<void> {
+    return this.run(async () => {
+      this.state.clips = communicationClips(parseAudioList(await this.request(1001)));
+      this.update('idle', 'Record each line once. Play keeps the recording unchanged.');
+    });
+  }
+  private async stopAudio(): Promise<void> {
+    this.touchedAudio = true;
+    await this.request(1003);
+  }
+  private async singlePlayback(): Promise<void> {
+    if (!this.previousLoop) {
+      this.previousLoop = parsePlayMode(await this.request(1010));
+      if (!this.previousLoop) throw new Error('Could not read the audio repeat setting.');
+    }
+    await this.request(1007, JSON.stringify({ play_mode: 'no_cycle' }));
+  }
+  play(slot: VoiceSlot): Promise<void> {
+    if (this.state.phase !== 'idle' || this.closed) return Promise.resolve();
+    const epoch = this.gestureEpoch;
+    this.update('working', 'Preparing playback…', slot);
+    return this.run(async () => {
+      // Refresh IDs in case another device replaced a recording.
+      this.state.clips = communicationClips(parseAudioList(await this.request(1001)));
+      const clip = this.state.clips[slot];
+      if (!clip) throw new Error('Record this voice line first.');
+      await this.stopAudio(); await this.singlePlayback();
+      await this.request(1002, JSON.stringify({ unique_id: clip.UNIQUE_ID }));
+      this.check();
+      if (slot === 'nice' && epoch === this.gestureEpoch) this.options.offerPaw();
+      this.update('idle', slot === 'nice' && epoch === this.gestureEpoch
+        ? 'Greeting playback and paw request sent. Use Paw down to request a standing pose.'
+        : 'Playback requested. The saved voice line stays unchanged.');
+    });
+  }
+  stopPlayback(): Promise<void> {
+    if (this.state.phase !== 'idle' || this.closed) return Promise.resolve();
+    this.update('working', 'Stopping audio…');
+    return this.run(async () => { await this.stopAudio(); this.update('idle', 'Audio stopped.'); });
+  }
+  pawDown(): void {
+    ++this.gestureEpoch; // A delayed greeting response must not raise it again.
+    try {
+      this.check(); this.options.lowerPaw();
+      this.update(this.state.phase, 'Paw-down request sent.', this.state.slot);
+    } catch (error) {
+      this.update(this.state.phase, error instanceof Error ? error.message : 'Could not request Paw down.', this.state.slot);
+    }
+  }
+  toggleRecord(slot: VoiceSlot): Promise<void> {
+    if (this.closed) return Promise.resolve();
+    if (this.state.slot === slot && this.state.phase === 'starting') {
+      this.stoppingEarly = true;
+      this.update('starting', 'Finishing microphone startup, then saving…', slot);
+      return this.task;
+    }
+    if (this.state.slot === slot && this.state.phase === 'recording') return this.finishRecording(slot);
+    if (this.state.phase !== 'idle') return Promise.resolve();
+    this.stoppingEarly = false;
+    this.update('starting', 'Starting Go2 microphone…', slot);
+    return this.run(async () => {
+      const files = parseAudioList(await this.request(1001));
+      if (files.length >= 10) throw new Error('Go2’s library is full. Free one slot in Sound & voice first. Your current recording is kept.');
+      await this.stopAudio();
+      this.recorder = this.options.recorder();
+      await this.recorder.start(); this.check();
+      this.update('recording', 'Recording on Go2. Press Stop & save when finished.', slot);
+      // AudioRecorder caps capture at 60 s; finish before that cap discards its result.
+      this.deadline = setTimeout(() => { void this.finishRecording(slot); }, 55_000);
+      if (this.stoppingEarly) await this.finishRecordingWork(slot);
+    });
+  }
+  private finishRecording(slot: VoiceSlot): Promise<void> {
+    this.update('saving', 'Saving voice line to Go2…', slot);
+    return this.run(() => this.finishRecordingWork(slot));
+  }
+  private async finishRecordingWork(slot: VoiceSlot): Promise<void> {
+    clearTimeout(this.deadline);
+    this.update('saving', 'Saving voice line to Go2…', slot);
+    const recorder = this.recorder;
+    const wav = await recorder?.stop();
+    recorder?.destroy(); this.recorder = null; this.check();
+    if (!wav || wav.byteLength <= 44) throw new Error('No usable audio recorded. Speak for at least half a second. Previous voice kept.');
+    const old = slotFiles(parseAudioList(await this.request(1001)), slot);
+    const name = `Comm ${slot} ${Date.now()}-${Math.floor(Math.random() * 0x1000000).toString(16).padStart(6, '0')}`;
+    await this.options.upload(wav, name, this.check); this.check();
+    const files = parseAudioList(await this.request(1001));
+    const saved = files.filter(file => file.UNIQUE_ID && (file.CUSTOM_NAME === name || file.CUSTOM_NAME === `${name}.wav`));
+    if (saved.length !== 1) throw new Error('Could not confirm the new recording. Previous voice kept.');
+    this.state.clips = communicationClips(files);
+    let cleanupFailed = false;
+    for (const file of old) {
+      if (file.UNIQUE_ID === saved[0].UNIQUE_ID) continue;
+      try { await this.request(1009, JSON.stringify({ unique_id: file.UNIQUE_ID })); }
+      catch { cleanupFailed = true; }
+    }
+    this.check();
+    this.update('idle', cleanupFailed ? 'New voice saved. An old copy could not be removed.' : 'Voice saved on Go2. It stays the same until you re-record this slot.');
+  }
+  /** Cancel capture immediately; wait for in-flight replies before stopping/restoring audio. */
+  close(): Promise<void> {
+    if (this.closeTask) return this.closeTask;
+    this.closed = true; ++this.gestureEpoch;
+    clearTimeout(this.deadline); this.recorder?.destroy(); this.recorder = null;
+    const pending = this.task;
+    this.closeTask = (async () => {
+      await pending;
+      if (this.touchedAudio) {
+        try { await this.options.request(1003, '{}'); } catch { /* disconnected */ }
+      }
+      if (this.previousLoop) {
+        try { await this.options.request(1007, JSON.stringify({ play_mode: this.previousLoop })); } catch { /* disconnected */ }
+      }
+      this.state.phase = 'closed';
+    })();
+    return this.closeTask;
+  }
+}

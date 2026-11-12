@@ -39,6 +39,43 @@ Actions and modes are issued as MCF sport API IDs. Tested against Go2 firmware v
 | Crouch | 1005 | Rage Mode | 2059 |
 | Lock On | 1004 | | |
 
+## Communication panel
+
+In **Drive → Communication** (also **Actions → Communication**), there are five
+fixed recording slots: **Hi**, **Nice to meet you**, **Explain instructions**,
+**Voice line 1**, and **Voice line 2**. They start empty. Press the matching **Record** button, speak,
+then press the same button (**Stop & save**) to finish. **Re-record** replaces
+that slot; **Play** leaves it unchanged. Each slot is independent of Parrot.
+
+Capture uses Go2's incoming WebRTC microphone, with the same noise reduction
+and 5× gain as Parrot. The phone/computer microphone is never requested. Pause
+briefly before speaking while the noise filter initializes. Recording does not
+stop on silence; it ends on the second press or saves automatically at 55 seconds.
+Closing the panel, hiding the app, disconnecting, or emergency stop cancels an
+unfinished recording. It also stops panel audio and restores the previous repeat
+setting when the connection is available. Closing does not issue a posture command.
+
+Clips are saved in Go2's audio library, using versioned names
+`Comm <slot> <timestamp>-<suffix>`. Opening on another client recovers the latest
+version from the robot. The replacement is uploaded and its ID confirmed before
+old versions of that slot are removed. Unrelated recordings are never deleted.
+One free library slot is needed for safe replacement; if the 10-clip library is
+full, remove an unused clip through **More → Sound & voice** first. Renaming a
+Communication clip outside this panel removes its slot association.
+
+**Play + offer paw** plays the saved Nice to meet you line once and requests the
+existing `Hello` / Shake Hand action (sport API 1016). **Paw down** requests
+`BalanceStand` (1002) independently of playback. These IDs and parameter-free
+calls follow [Unitree's SportClient](https://github.com/unitreerobotics/unitree_sdk2_python/blob/master/unitree_sdk2py/go2/sport/sport_client.py).
+There is no documented hold-paw parameter: the robot controls the gesture's
+animation and may lower its paw automatically. Paw-down interruption and timing
+still need a supervised test on this Go2. The separate API 1029 guard is unchanged.
+A sent request is not confirmation that the physical gesture completed.
+
+Validation: `npm run check:communication`, `node scripts/check-communication-ui.mjs`
+(with the dev server running), and `npm run build`. The tests use an in-memory
+robot library and fake audio capture; they do not move a real robot.
+
 ## Parrot voice exchange
 
 In Drive, open **Actions → Parrot**. Save or upload the fixed middle line

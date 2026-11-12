@@ -15,13 +15,14 @@
     "check:protocol": "node scripts/check-protocol.mjs",
     "check:anchor": "node scripts/check-map-anchor.mjs",
     "check:parrot": "node scripts/check-parrot.mjs && node scripts/check-robot-recorder.mjs && node scripts/check-audio-denoise.mjs",
-    "check": "npm run check:discovery && npm run check:protocol && node scripts/check-native-ble.mjs && GO2_TEST_PLATFORM=android node scripts/check-native-ble.mjs && node scripts/check-camera-framing.mjs && node scripts/check-bundled-audio.mjs && node scripts/check-trick-or-treat.mjs && npm run check:parrot && npm run check:explore && npm run check:anchor && node scripts/check-android.mjs && npm run check:mapping-service",
+    "check": "npm run check:discovery && npm run check:protocol && node scripts/check-native-ble.mjs && GO2_TEST_PLATFORM=android node scripts/check-native-ble.mjs && node scripts/check-camera-framing.mjs && node scripts/check-bundled-audio.mjs && node scripts/check-trick-or-treat.mjs && npm run check:parrot && npm run check:communication && npm run check:explore && npm run check:anchor && node scripts/check-android.mjs && npm run check:mapping-service",
     "check:explore": "node scripts/check-mapping-explorer.mjs",
     "check:discovery": "node scripts/check-auto-discovery.mjs",
     "check:speed": "node scripts/check-drive-speed.mjs",
     "check:map-live": "node scripts/check-mapping-live-view.mjs",
     "mapping:setup": "bash integrations/dimos/setup.sh",
-    "check:mapping-service": "node --test scripts/check-mapping-service.mjs"
+    "check:mapping-service": "node --test scripts/check-mapping-service.mjs",
+    "check:communication": "node scripts/check-communication.mjs"
   },
   "devDependencies": {
     "@capacitor/cli": "^8.5.3",

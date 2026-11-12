@@ -1,0 +1,47 @@
+.communication-panel {
+  --communication-border: var(--pocket-line, #d4dfdf);
+  box-sizing: border-box; position: fixed; inset: 0; margin: auto;
+  width: min(720px, calc(100vw - 24px)); max-height: calc(100dvh - 24px);
+  padding: 0; border: 1px solid var(--communication-border); border-radius: 20px;
+  background: var(--pocket-surface, #fff); color: var(--pocket-ink, #18353c);
+  font: 15px/1.4 system-ui, sans-serif;
+}
+.communication-panel[open] {display: flex; flex-direction: column; overflow: hidden;}
+.communication-panel::backdrop {background: #001c25a6;}
+.communication-panel header {display:flex; align-items:center; justify-content:space-between; gap:12px; padding:16px 20px; border-bottom:1px solid var(--communication-border); flex-shrink:0;}
+.communication-panel h2 {font-size:23px; line-height:1.2; margin:0;}
+.communication-panel header p {margin:3px 0 0; font-size:14px;}
+.communication-panel button {font:600 14px/1.2 system-ui; border:1px solid var(--communication-border); border-radius:10px; padding:10px 14px; min-height:44px; cursor:pointer; background:var(--pocket-surface, #fff); color:inherit; touch-action:manipulation;}
+.communication-panel button:disabled {opacity:.45; cursor:default;}
+.communication-panel button:focus-visible {outline:3px solid #32a5b2; outline-offset:2px;}
+.communication-panel .communication-content {min-height:0; overflow:auto; padding:0 20px;}
+.communication-panel .communication-help {font-size:13px; line-height:1.45; margin:12px 0;}
+.communication-panel .communication-lines {display:grid; gap:10px;}
+.communication-panel .communication-line {display:flex; gap:12px; align-items:center; justify-content:space-between; border:1px solid var(--communication-border); border-radius:14px; padding:14px;}
+.communication-panel .communication-label {min-width:0;}
+.communication-panel h3 {font-size:17px; margin:0 0 3px; overflow-wrap:anywhere;}
+.communication-panel [data-saved] {font-size:12px; opacity:.8;}
+.communication-panel .communication-buttons {display:flex; gap:8px; flex-shrink:0;}
+.communication-panel [data-play] {background:#1c5159; color:#fff; border-color:#1c5159;}
+.communication-panel .is-recording {border-color:#b13b45; background:#b13b4510;}
+.communication-panel .is-recording [data-record] {background:#a12c37; color:white; border-color:#a12c37;}
+.communication-panel footer {border-top:1px solid var(--communication-border); padding:12px 20px; flex-shrink:0;}
+.communication-panel .communication-tools {display:flex; gap:8px;}
+.communication-panel [data-down] {flex:1; background:#1c5159; color:white;}
+.communication-panel [role=status] {font-size:13px; line-height:1.35; margin:8px 0 0; min-height:18px;}
+.pocket-communication-shortcut {position:absolute;top:20px;left:max(170px,calc(env(safe-area-inset-left) + 170px));height:50px;padding:0 12px;border:1px solid var(--pocket-line);border-radius:16px;background:var(--pocket-surface);color:var(--pocket-ink);font:650 14px system-ui;z-index:20;pointer-events:auto;}
+@media (max-width:520px) {
+ .communication-panel .communication-line {align-items:stretch; flex-direction:column; gap:8px; padding:12px;}
+ .communication-panel .communication-buttons button {flex:1;}
+ .communication-panel header {padding:12px 16px;}
+ .communication-panel .communication-content {padding:0 16px;}
+ .communication-panel footer {padding:10px 16px;}
+ .communication-panel h2 {font-size:20px;}
+}
+@media (orientation:landscape) and (max-height:600px) {
+ .pocket-communication-shortcut {top:10px;height:54px;}
+ .communication-panel header {padding:8px 16px;}
+ .communication-panel header p {display:none;}
+ .communication-panel footer {padding:8px 16px;}
+ .communication-panel .communication-line {padding:10px 12px;}
+}

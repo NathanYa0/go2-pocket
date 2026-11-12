@@ -17,6 +17,8 @@ import { DriveViewport } from './components/drive-viewport';
 import { TrickOrTreat } from './trick-or-treat';
 import { Parrot } from './parrot';
 import { openParrotPanel } from './components/parrot-panel';
+import { Communication } from './communication';
+import { openCommunicationPanel } from './components/communication-panel';
 import { EmergencyStop, type InputSource } from './components/side-buttons';
 import { SettingsDrawer } from './components/settings-drawer';
 import { StatusPage } from './components/status-page';
@@ -101,6 +103,7 @@ export class App {
 
   mobileSuspend(): void {
     this.mappingPage?.cancelAnchorReturn();
+    this.closeCommunicationPanel?.(); this.closeCommunicationPanel = null;
     this.closeParrotPanel?.(); this.closeParrotPanel = null;
     this.parrot?.cancel();
     this.trickOrTreat?.cancel();
@@ -193,6 +196,9 @@ export class App {
   /** In-flight audiohub requests keyed by request id → response resolver. */
   private audioPending = new Map<number, (data: unknown, code?: number) => void>();
   private trickOrTreat: TrickOrTreat | null = null;
+  private communication: Communication | null = null;
+  private closeCommunicationPanel: (() => void) | null = null;
+  private openingCommunication = false;
   private parrot: Parrot | null = null;
   private closeParrotPanel: (() => void) | null = null;
   /** In-flight arm (G1 teaching) requests keyed by request id → resolver.
@@ -542,6 +548,14 @@ export class App {
     maps.setAttribute('aria-label', 'Open mapping');
     maps.addEventListener('click', () => this.mobileNavigate('auto-mapping'));
     this.controlUi.appendChild(maps);
+    if (!isG1Family(cloudApi.connectFamily)) {
+      const communication = document.createElement('button');
+      communication.type = 'button';
+      communication.className = 'pocket-communication-shortcut';
+      communication.textContent = 'Communication';
+      communication.addEventListener('click', () => { void this.showCommunication(); });
+      this.controlUi.appendChild(communication);
+    }
 
 
     const demo = document.createElement('button');
@@ -589,6 +603,7 @@ export class App {
     const w2 = document.createElement('div');
     w2.className = 'wrapper-2';
     this.actionBar = new ActionBar(w2, (action) => {
+      if (action.localAction === 'communication') { void this.showCommunication(); return; }
       if (action.localAction === 'parrot') { this.showParrot(); return; }
       this.parrot?.cancel();
       this.trickOrTreat?.cancel();
@@ -2441,6 +2456,51 @@ export class App {
     });
   }
 
+  private async showCommunication(): Promise<void> {
+    if (this.openingCommunication) return;
+    if (this.parrot?.busy) { this.notifyBlocked('Wait for Parrot to finish before opening Communication.'); return; }
+    this.openingCommunication = true;
+    this.mobileSuspend();
+    try {
+      await this.communication?.close();
+      if (this.currentScreen !== 'control') return;
+      if (this.isEmergencyStopped()) { this.notifyEstopBlocked(); return; }
+      // Capture the connection so delayed cleanup cannot stop audio on a new robot.
+      const handler = this.dataHandler;
+      const available = () => !preview && !!handler && handler === this.dataHandler
+        && this.webrtc?.channel?.readyState === 'open' && this.currentScreen === 'control' && !this.isEmergencyStopped();
+      let panel: ReturnType<typeof openCommunicationPanel> | undefined;
+      this.communication = new Communication({
+        available,
+        request: (api, payload) => {
+          if (!handler || handler !== this.dataHandler) return Promise.reject(new Error('Go2 is disconnected.'));
+          return this.publishAudioRequest(api, payload, true);
+        },
+        upload: (wav, name, check) => this.uploadWavToLibrary(wav, name, undefined, check),
+        recorder: () => {
+          const stream = this.audioEl?.srcObject;
+          if (!(stream instanceof MediaStream) || !stream.getAudioTracks().some(track => track.readyState === 'live' && track.enabled)) {
+            throw new Error('Go2 microphone audio is unavailable. Reconnect to the robot.');
+          }
+          return new AudioRecorder(stream, 5, true);
+        },
+        offerPaw: () => {
+          if (!available()) throw new Error('Connect to Go2 before requesting the paw greeting.');
+          const id = this.publishRequestLogged(RTC_TOPIC.SPORT_MOD, SPORT_CMD.Hello, '{}', { label: 'Communication / offer paw' });
+          if (id === undefined) throw new Error('Could not send the paw greeting.');
+        },
+        lowerPaw: () => {
+          if (!available()) throw new Error('Connect to Go2 before requesting Paw down.');
+          const id = this.publishRequestLogged(RTC_TOPIC.SPORT_MOD, SPORT_CMD.BalanceStand, '{}', { label: 'Communication / paw down (balanced stand)' });
+          if (id === undefined) throw new Error('Could not send Paw down.');
+        },
+        state: state => panel?.render(state),
+      });
+      panel = openCommunicationPanel(this.communication, preview);
+      this.closeCommunicationPanel = panel.close;
+    } finally { this.openingCommunication = false; }
+  }
+
   private showParrot(): void {
     if (this.parrot?.busy) { this.notifyBlocked('Parrot is finishing. Please wait.'); return; }
     this.mobileSuspend();
@@ -2766,6 +2826,7 @@ export class App {
   private sendStop(active: boolean): void {
     this.emergencyStopped = active;
     if (!active) return;
+    this.closeCommunicationPanel?.(); this.closeCommunicationPanel = null;
     this.closeParrotPanel?.(); this.closeParrotPanel = null;
     this.parrot?.cancel();
     this.trickOrTreat?.cancel();

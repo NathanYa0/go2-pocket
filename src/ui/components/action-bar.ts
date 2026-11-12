@@ -77,7 +77,7 @@ export function r1ModeToState(mode: number | undefined): G1State {
 
 export interface RobotAction {
   apiId: number;
-  localAction?: 'parrot';
+  localAction?: 'parrot' | 'communication';
   name: string;
   icon: string;
   /** JSON parameter string sent with the request. Defaults to '{}'. */
@@ -271,6 +271,7 @@ export const GO2_ACTIONS: RobotAction[] = [
   { apiId: SPORT_CMD.StandDown, name: 'Crouch', icon: '/icons/lieDown.svg', families: GO2, go2State: 'lieDown' },
   { apiId: SPORT_CMD.StandUp, name: 'Lock On', icon: '/icons/mode_locking.svg', families: GO2, go2State: 'jointLock' },
   { apiId: 0, localAction: 'parrot', name: 'Parrot', icon: '/sprites/audio_mic.svg', families: GO2 },
+  { apiId: 0, localAction: 'communication', name: 'Communication', icon: '/sprites/audio_mic.svg', families: GO2 },
 ];
 
 /** Go2 modes (persistent postures) — fire to rt/api/sport/request. */
