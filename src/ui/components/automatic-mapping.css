@@ -10,7 +10,7 @@
 .auto-map-view canvas { width:100%;height:100%;display:block;touch-action:none; }
 .auto-map-caption { position:absolute;left:12px;right:12px;bottom:12px;padding:8px;background:#ffffffdf;border-radius:8px;font-size:12px;pointer-events:none; }
 .auto-map-fit { position:absolute;top:12px;left:12px; }
-.auto-map-page aside { width:330px;max-width:80%;overflow:auto;padding:12px 18px;background:#fff;border-left:1px solid #ccddda; }
+.auto-map-page aside { width:330px;flex:0 0 auto;max-width:calc(100% - 120px);overflow:auto;padding:12px 18px;background:#fff;border-left:1px solid #ccddda; }
 .auto-map-page p { margin:8px 0 14px; }
 .auto-map-status { padding:12px;border-left:4px solid #20a28b;background:#edf7f3;overflow-wrap:anywhere; }
 .auto-map-confirm { display:flex;gap:10px;align-items:flex-start;font-size:14px;margin:16px 0; }
@@ -22,5 +22,8 @@
 .auto-map-saved-row { display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:12px 0;border-bottom:1px solid #d6e2df; }
 .auto-map-saved-row span { grid-column:1/-1;font-size:13px; }
 .auto-map-saved-row a { text-align:center; }
-.drawer-collapsed aside { display:none; }
-@media(max-width:700px) { .auto-map-page aside { position:absolute;right:0;top:0;bottom:0;width:300px;box-shadow:-5px 0 20px #173c4020; } .auto-map-page h2 { font-size:16px; } .auto-map-page header { padding:8px;gap:8px; } .auto-map-page header button { padding:8px;font-size:13px; } }
+.auto-map-resizer { flex:0 0 12px;cursor:col-resize;touch-action:none;background:#dce9e6;position:relative; }
+.auto-map-resizer::after { content:'';position:absolute;width:3px;height:40px;top:50%;left:4px;transform:translateY(-50%);border-radius:3px;background:#6d9690; }
+.auto-map-resizer:hover,.auto-map-resizer:focus-visible { background:#b9d5ce;outline:2px solid #164e55;outline-offset:-2px; }
+.drawer-collapsed aside,.drawer-collapsed .auto-map-resizer { display:none; }
+@media(max-width:700px) { .auto-map-page h2 { font-size:16px; } .auto-map-page header { padding:8px;gap:8px; } .auto-map-page header button { padding:8px;font-size:13px; } }

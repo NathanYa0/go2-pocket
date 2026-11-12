@@ -22,6 +22,7 @@ export class AutomaticMappingPage {
   private points = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial({ size: 0.035, vertexColors: true }));
   private resize: ResizeObserver;
   private fitted = false;
+  private panelResize: ResizeObserver;
   private cloudAt = 0;
   private savedView = '';
   private frame = 0;
@@ -32,7 +33,7 @@ export class AutomaticMappingPage {
     this.element.innerHTML = `
       <header><button data-back aria-label="Back">‹ Back</button><h2>Automatic mapping</h2><button data-toggle aria-expanded="true">Controls ‹</button></header>
       <div class="auto-map-layout"><div class="auto-map-view"><canvas aria-label="DimOS 3D room map"></canvas><div class="auto-map-caption">Waiting for map points. Drag to rotate; scroll or pinch to zoom.</div><button class="auto-map-fit">Fit map</button></div>
-      <aside><h3>Explore the room</h3><p>The Mac builds the map while Go2 explores. Drive is disconnected while this screen owns the robot.</p>
+      <div class="auto-map-resizer" role="separator" tabindex="0" aria-label="Resize mapping controls" aria-orientation="vertical"></div><aside><h3>Explore the room</h3><p>The Mac builds the map while Go2 explores. Drive is disconnected while this screen owns the robot.</p>
         <p class="auto-map-status" role="status"></p>
         <label class="auto-map-confirm"><input type="checkbox"> I’m watching Go2, the floor is clear of drops, and the remote stop is available.</label>
         <div class="auto-map-buttons"><button data-command="start">Start new map</button><button data-command="explore">Explore</button><button data-command="pause">Pause movement</button><button data-command="stop">Stop & Save</button></div>
@@ -55,6 +56,46 @@ export class AutomaticMappingPage {
     this.element.querySelector('input')!.addEventListener('change', () => this.renderStatus());
     this.element.querySelector('.auto-map-live')!.addEventListener('click', () => { this.savedView = ''; this.cloudAt = 0;this.fitted = false; });
     this.element.querySelector('.auto-map-fit')!.addEventListener('click', () => this.fit());
+    const layout = this.element.querySelector<HTMLElement>('.auto-map-layout')!;
+    const aside = this.element.querySelector<HTMLElement>('aside')!;
+    const handle = this.element.querySelector<HTMLElement>('.auto-map-resizer')!;
+    let panelWidth = 330;
+    try {
+      const stored = Number(localStorage.getItem('pocket-mapping-panel-width'));
+      if (Number.isFinite(stored) && stored >= 180) panelWidth = stored;
+    } catch { /* Storage can be unavailable. */ }
+    const setPanelWidth = (requested: number, persist = false) => {
+      const max = Math.max(180, layout.clientWidth - 120);
+      const width = Math.min(max, Math.max(180, requested));
+      aside.style.width = `${width}px`;
+      handle.setAttribute('aria-valuemin', '180');
+      handle.setAttribute('aria-valuemax', String(max));
+      handle.setAttribute('aria-valuenow', String(Math.round(width)));
+      if (persist) {
+        panelWidth = width;
+        try { localStorage.setItem('pocket-mapping-panel-width', String(width)); } catch { /* Optional preference. */ }
+      }
+    };
+    handle.addEventListener('pointerdown', event => {
+      if (event.button !== 0) return;
+      event.preventDefault();handle.setPointerCapture(event.pointerId);
+    });
+    handle.addEventListener('pointermove', event => {
+      if (!handle.hasPointerCapture(event.pointerId)) return;
+      setPanelWidth(layout.getBoundingClientRect().right - event.clientX - handle.clientWidth / 2, true);
+    });
+    const release = (event: PointerEvent) => {
+      if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId);
+    };
+    handle.addEventListener('pointerup', release);handle.addEventListener('pointercancel', release);
+    handle.addEventListener('keydown', event => {
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+      event.preventDefault();
+      setPanelWidth(aside.getBoundingClientRect().width + (event.key === 'ArrowLeft' ? 20 : -20), true);
+    });
+    this.panelResize = new ResizeObserver(() => setPanelWidth(panelWidth));
+    this.panelResize.observe(layout);
+    setPanelWidth(panelWidth);
     const canvas = this.element.querySelector('canvas')!;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
@@ -180,7 +221,7 @@ export class AutomaticMappingPage {
     this.leave();this.disposed = true;
     if (this.timer) clearTimeout(this.timer);
     window.removeEventListener('pagehide', this.leave);
-    cancelAnimationFrame(this.frame);this.resize.disconnect();this.orbit.dispose();
+    cancelAnimationFrame(this.frame);this.resize.disconnect();this.panelResize.disconnect();this.orbit.dispose();
     this.scene.traverse(object => { if (object instanceof THREE.Points || object instanceof THREE.LineSegments) { object.geometry.dispose();const materials = Array.isArray(object.material) ? object.material : [object.material];materials.forEach(m => m.dispose()); } });
     this.renderer.dispose();this.element.remove();
   }

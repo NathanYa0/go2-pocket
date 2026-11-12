@@ -25,7 +25,7 @@ export function installDevicePreview(): boolean {
   phone.appendChild(frame); holder.appendChild(phone); stage.appendChild(holder);
   root.append(header, stage);
 
-  let landscape = false;
+  let landscape = true;
   let lastScreen = '';
   const layout = () => {
     const width = landscape ? 852 : 393;
@@ -49,10 +49,10 @@ export function installDevicePreview(): boolean {
     if (event.source !== frame.contentWindow || event.origin !== location.origin || event.data?.type !== 'go2-device-screen') return;
     const screen = event.data.screen;
     if (typeof screen !== 'string' || screen === lastScreen) return;
-    const wasDriving = lastScreen === 'control' || lastScreen === 'mapping';
     lastScreen = screen;
-    if (screen === 'control' || screen === 'mapping' || wasDriving) {
-      landscape = screen === 'control' || screen === 'mapping';
+    // Keep the chosen orientation when changing pages; start in landscape.
+    if (screen === 'control' || screen === 'mapping' || screen === 'auto-mapping') {
+      landscape = true;
       layout();
     }
   });
