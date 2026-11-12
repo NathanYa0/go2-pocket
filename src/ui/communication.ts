@@ -106,7 +106,7 @@ export class Communication {
       this.check();
       if (slot === 'nice' && epoch === this.gestureEpoch) this.options.offerPaw();
       this.update('idle', slot === 'nice' && epoch === this.gestureEpoch
-        ? 'Greeting playback and paw request sent. Use Paw down to request a standing pose.'
+        ? 'Greeting playback and paw request sent. Use Lower paw to request a standing pose.'
         : 'Playback requested. The saved voice line stays unchanged.');
     });
   }
@@ -119,9 +119,9 @@ export class Communication {
     ++this.gestureEpoch; // A delayed greeting response must not raise it again.
     try {
       this.check(); this.options.lowerPaw();
-      this.update(this.state.phase, 'Paw-down request sent.', this.state.slot);
+      this.update(this.state.phase, 'Lower-paw request sent.', this.state.slot);
     } catch (error) {
-      this.update(this.state.phase, error instanceof Error ? error.message : 'Could not request Paw down.', this.state.slot);
+      this.update(this.state.phase, error instanceof Error ? error.message : 'Could not request Lower paw.', this.state.slot);
     }
   }
   toggleRecord(slot: VoiceSlot): Promise<void> {

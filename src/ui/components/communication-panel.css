@@ -20,15 +20,16 @@
 .communication-panel .communication-line {display:flex; gap:12px; align-items:center; justify-content:space-between; border:1px solid var(--communication-border); border-radius:14px; padding:14px;}
 .communication-panel .communication-label {min-width:0;}
 .communication-panel h3 {font-size:17px; margin:0 0 3px; overflow-wrap:anywhere;}
+.communication-panel .communication-gesture-note {display:block;font-size:12px;line-height:1.35;margin-top:4px;max-width:28ch;}
 .communication-panel [data-saved] {font-size:12px; opacity:.8;}
 .communication-panel .communication-buttons {display:flex; gap:8px; flex-shrink:0;}
 .communication-panel [data-play] {background:#1c5159; color:#fff; border-color:#1c5159;}
 .communication-panel .is-recording {border-color:#b13b45; background:#b13b4510;}
 .communication-panel .is-recording [data-record] {background:#a12c37; color:white; border-color:#a12c37;}
 .communication-panel footer {border-top:1px solid var(--communication-border); padding:12px 20px; flex-shrink:0;}
-.communication-panel .communication-tools {display:flex; gap:8px;}
+.communication-panel .communication-tools {display:flex; gap:8px; flex-shrink:0; padding:10px 20px; border-bottom:1px solid var(--communication-border); background:var(--pocket-surface, #fff); z-index:1;}
 .communication-panel [data-down] {flex:1; background:#1c5159; color:white;}
-.communication-panel [role=status] {font-size:13px; line-height:1.35; margin:8px 0 0; min-height:18px;}
+.communication-panel [role=status] {font-size:13px; line-height:1.35; margin:0; min-height:18px;}
 .pocket-communication-shortcut {position:absolute;top:20px;left:max(170px,calc(env(safe-area-inset-left) + 170px));height:50px;padding:0 12px;border:1px solid var(--pocket-line);border-radius:16px;background:var(--pocket-surface);color:var(--pocket-ink);font:650 14px system-ui;z-index:20;pointer-events:auto;}
 @media (max-width:520px) {
  .communication-panel .communication-line {align-items:stretch; flex-direction:column; gap:8px; padding:12px;}

@@ -64,13 +64,26 @@ full, remove an unused clip through **More → Sound & voice** first. Renaming a
 Communication clip outside this panel removes its slot association.
 
 **Play + offer paw** plays the saved Nice to meet you line once and requests the
-existing `Hello` / Shake Hand action (sport API 1016). **Paw down** requests
+existing `Hello` / Shake Hand action (sport API 1016). **Lower paw**, pinned directly below the panel title, requests
 `BalanceStand` (1002) independently of playback. These IDs and parameter-free
 calls follow [Unitree's SportClient](https://github.com/unitreerobotics/unitree_sdk2_python/blob/master/unitree_sdk2py/go2/sport/sport_client.py).
 There is no documented hold-paw parameter: the robot controls the gesture's
-animation and may lower its paw automatically. Paw-down interruption and timing
+animation. The user’s live test confirmed that the standard greeting lowers the
+paw automatically. Holding it until Lower paw is pressed is not implemented.
+Paw-down interruption and timing
 still need a supervised test on this Go2. The separate API 1029 guard is unchanged.
 A sent request is not confirmation that the physical gesture completed.
+
+Paw-hold investigation (2026-11-12): the app sends a single `Hello` request;
+there is no automatic lower-paw timer in Communication. The official
+[C++ SportClient interface](https://github.com/unitreerobotics/unitree_sdk2/blob/main/include/unitree/robot/go2/sport/sport_client.hpp)
+also declares only `Hello()` with no hold/duration argument. `Pose(bool)` is a
+separate command, not a documented way to freeze a greeting. Unitree provides a
+[low-level joint-control example](https://github.com/unitreerobotics/unitree_sdk2/blob/main/example/go2/go2_low_level.cpp)
+using DDS `rt/lowcmd`, but this is not a verified control interface for our stock
+Pro WebRTC connection. A reliable held-paw implementation remains blocked on a
+supported pose-hold or joint-control interface for this robot. No repeated
+Hello loop, guessed freeze command, or low-level motor command was sent.
 
 Validation: `npm run check:communication`, `node scripts/check-communication-ui.mjs`
 (with the dev server running), and `npm run build`. The tests use an in-memory

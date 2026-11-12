@@ -4,7 +4,7 @@ import { mkdir } from 'node:fs/promises';
 const browser=await chromium.launch({channel:'chrome',headless:true});
 await mkdir('output/communication-ui',{recursive:true});
 try {
- for(const size of [{width:1440,height:900},{width:852,height:393},{width:393,height:852}]) {
+ for(const size of [{width:1440,height:900},{width:852,height:393},{width:393,height:852},{width:568,height:300}]) {
   const page=await browser.newPage({viewport:size.width<size.height ? {width:852,height:393} : size});
   const errors=[];page.on('pageerror',error=>errors.push(error.message));
   await page.goto('http://127.0.0.1:5186/?preview=1&desktop=1');
@@ -36,7 +36,7 @@ try {
   await page.getByRole('button',{name:'Stop and save Nice to meet you',exact:true}).click();
   await page.getByRole('button',{name:'Play Nice to meet you and offer paw',exact:true}).click();
   await page.waitForFunction(()=>window.events.includes('paw'));
-  await page.getByRole('button',{name:'Paw down',exact:true}).click();
+  await page.getByRole('button',{name:'Lower paw',exact:true}).click();
   assert.ok(await page.evaluate(()=>window.events.includes('down')));
   await page.getByRole('button',{name:'Record Explain instructions',exact:true}).click();
   await page.getByRole('button',{name:'Stop and save Explain instructions',exact:true}).click();
@@ -50,8 +50,15 @@ try {
   const bounds=await page.locator('.communication-panel').boundingBox();
   assert.ok(bounds.x>=0&&bounds.y>=0&&bounds.x+bounds.width<=size.width+1&&bounds.y+bounds.height<=size.height+1);
   assert.ok(await page.locator('.communication-panel').evaluate(el=>el.scrollWidth<=el.clientWidth+1));
-  const buttons=await page.locator('.communication-panel footer').boundingBox();
-  assert.ok(buttons.y+buttons.height<=size.height,'Paw down and Stop audio stay visible');
+  const buttons=await page.locator('.communication-panel .communication-tools').boundingBox();
+  assert.ok(buttons.y>=0&&buttons.y+buttons.height<=size.height,'Lower paw and Stop audio stay visible');
+  const content=await page.locator('.communication-content').boundingBox();
+  assert.ok(buttons.y+buttons.height<=content.y+1,'Lower paw is above the scrolling recordings');
+  for(const scroll of [0,100000]) {
+   await page.locator('.communication-content').evaluate((el,y)=>el.scrollTop=y,scroll);
+   const reachable=await page.locator('[data-down]').evaluate(el=>{const r=el.getBoundingClientRect();return el===document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);});
+   assert.ok(reachable,'Lower paw remains clickable at either end of the list');
+  }
   await page.locator('.communication-content').evaluate(el=>el.scrollTop=0);
   await page.screenshot({path:`output/communication-ui/${size.width}x${size.height}.png`});
   await page.getByRole('button',{name:'Record Voice line 1',exact:true}).click();

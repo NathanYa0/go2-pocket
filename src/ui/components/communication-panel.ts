@@ -6,18 +6,25 @@ export function openCommunicationPanel(controller: Communication, preview = fals
   dialog.className = 'communication-panel';
   dialog.setAttribute('aria-labelledby', 'communication-title');
   dialog.innerHTML = `<header><div><h2 id="communication-title">Communication</h2><p>Saved voices, a friendly greeting.</p></div><button type="button" data-close aria-label="Close Communication">Close</button></header>
+    <div class="communication-tools" role="group" aria-label="Paw and audio controls"><button type="button" data-down>Lower paw</button><button type="button" data-stop>Stop audio</button></div>
     <div class="communication-content">
       <p class="communication-help">Record with Go2’s microphone; play through its speaker. Pause briefly before speaking. Press Record again to stop and save. Re-record replaces only that line. Recordings also save automatically at 55 seconds.</p>
       <div class="communication-lines"></div>
-      <p class="communication-help">Nice to meet you requests Go2’s standard paw greeting. Holding the paw up until Paw down is not yet supported; Go2 may lower it automatically.</p>
+      <p class="communication-help">Nice to meet you requests Go2’s standard paw greeting. Go2 lowers its paw automatically after this gesture. Keeping it raised until Lower paw is pressed is not implemented.</p>
     </div>
-    <footer><div class="communication-tools"><button type="button" data-down>Paw down</button><button type="button" data-stop>Stop audio</button></div><p role="status" aria-live="polite"></p></footer>`;
+    <footer><p role="status" aria-live="polite"></p></footer>`;
   const lines = dialog.querySelector<HTMLElement>('.communication-lines')!;
   const rows = VOICE_SLOTS.map(slot => {
     const row = document.createElement('section');
     row.className = 'communication-line';
     row.innerHTML = `<div class="communication-label"><h3></h3><span data-saved></span></div><div class="communication-buttons"><button type="button" data-play></button><button type="button" data-record></button></div>`;
     row.querySelector('h3')!.textContent = slot.label;
+    if (slot.key === 'nice') {
+      const note = document.createElement('small');
+      note.className = 'communication-gesture-note';
+      note.textContent = 'Standard gesture · paw lowers automatically';
+      row.querySelector('.communication-label')!.appendChild(note);
+    }
     const play = row.querySelector<HTMLButtonElement>('[data-play]')!;
     const record = row.querySelector<HTMLButtonElement>('[data-record]')!;
     play.textContent = slot.key === 'nice' ? 'Play + offer paw' : 'Play';
