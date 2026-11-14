@@ -70,11 +70,12 @@ export function installShell(app: App): void {
   window.addEventListener('resize', updateOrientation);
   window.addEventListener('go2-screen', update);
   const suspend = () => app.mobileSuspend();
+  const background = () => app.mobileSuspend('background');
   window.addEventListener('go2-suspend', suspend);
   window.addEventListener('go2-remote-lost', suspend);
   window.addEventListener('pagehide', suspend);
-  window.addEventListener('blur', suspend);
-  document.addEventListener('visibilitychange', () => { if (document.hidden) suspend(); });
+  window.addEventListener('blur', background);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) background(); });
   window.addEventListener('orientationchange', suspend);
   if (android) {
     void NativeApp.addListener('backButton', () => {

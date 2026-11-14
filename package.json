@@ -22,7 +22,7 @@
     "check:map-live": "node scripts/check-mapping-live-view.mjs",
     "mapping:setup": "bash integrations/dimos/setup.sh",
     "check:mapping-service": "node --test scripts/check-mapping-service.mjs",
-    "check:communication": "node scripts/check-communication.mjs"
+    "check:communication": "node scripts/check-communication.mjs && node scripts/check-audio-library-upload.mjs && node scripts/check-music-dance.mjs"
   },
   "devDependencies": {
     "@capacitor/cli": "^8.5.3",

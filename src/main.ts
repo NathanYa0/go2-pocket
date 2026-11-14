@@ -1,5 +1,6 @@
 import './ui/styles.css';
 import './mobile/mobile.css';
+import './mobile/phone-layout.css';
 import './mobile/device-preview.css';
 import { installDevicePreview } from './mobile/device-preview';
 import { installPlatform } from './mobile/platform';

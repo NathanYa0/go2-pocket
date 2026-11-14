@@ -41,13 +41,36 @@ Actions and modes are issued as MCF sport API IDs. Tested against Go2 firmware v
 
 ## Communication panel
 
-In **Drive → Communication** (also **Actions → Communication**), there are five
+In **Drive → Communication** (also **Actions → Communication**), there are seven
 fixed recording slots: **Hi**, **Nice to meet you**, **Explain instructions**,
-**Voice line 1**, and **Voice line 2**. They start empty. Press the matching **Record** button, speak,
+**Music**, **Voice line 1**, **Voice line 2**, and **After Voice line 1**. They start empty. Press the matching **Record** button, speak,
 then press the same button (**Stop & save**) to finish. **Re-record** replaces
 that slot; **Play** leaves it unchanged. Each slot is independent of Parrot.
 
-**Hi**, **Nice to meet you**, and **Explain instructions** also have an
+The panel follows the interaction order: **Hi → Nice to meet you → Play Voice
+line 1 → Explain instructions → Record/Re-record Voice line 1 → Voice line 2
+(play and record) → Music**. The **After Voice line 1** upload row sits immediately after Record Voice line 1. Voice line 1's separate play and recording rows
+operate on the same saved clip. Its saved-audio selector sits under the recording
+row; selecting or replacing it updates the earlier playback button.
+
+Upload, record, or select your message in **After Voice line 1**. When you press
+**Stop & save** for Voice line 1 (or capture reaches its 55-second cap), capture
+stops and the saved message starts once, before the new recording uploads.
+Only the playback command is awaited, not the end of the message: the panel
+returns to idle when saving finishes, even if audio is still playing. Missing
+follow-up audio or a failed playback command does not prevent saving. Other
+slots and file uploads do not start this message. **Play** also works manually.
+Existing follow-up and older prompt recordings remain in Go2's library.
+
+During an upload, saved voice **Play**, **Play song only**, and **Stop audio**
+remain available. These audio commands do not cancel the upload or replace its
+progress. Recording, uploading another file, changing slot selections, and
+starting a music dance wait until saving finishes. Closing the panel or
+disconnecting cancels pending work; an existing clip stays until its replacement
+is confirmed.
+
+**Hi**, **Nice to meet you**, **Explain instructions**, **Music**, and
+**After Voice line 1** also have an
 **Upload audio** button. Choose WAV, MP3, M4A, or another audio format supported
 by the browser. Files are converted to mono, 16 kHz, 16-bit PCM WAV before saving
 to the same slot on Go2. The converted file must fit Go2's 10 MB limit. Uploading
@@ -57,6 +80,19 @@ filename is not used as the library slot name. File-picker cancellation keeps
 the current clip. Uploaded files retain their level; the recording-only 5× gain
 and noise reduction are not applied to file uploads.
 
+Uploads show percentage progress and then poll the library for confirmation
+(up to 21 reads, spaced 500 ms apart). A 4:15 clip converts to approximately
+8.16 MB, within the app's 10 MiB upload cap. Transfers use raw-WAV MD5,
+millisecond creation time, and 4096-character base64 blocks, matching
+[the WebRTC audiohub uploader](https://github.com/legion1581/unitree_webrtc_connect/blob/master/unitree_webrtc_connect/webrtc_audiohub.py).
+This does not establish a firmware-specific duration limit.
+
+If an upload is not confirmed, first press **Refresh saved audio**. Expand
+**Use saved audio** under the desired line, choose the existing clip, and press
+**Use selected clip**. This enables Play without another upload, rename, or
+deletion. Explicit selections are remembered in this browser/app for the robot
+(serial number when known, otherwise IP); they do not transfer to other devices.
+
 Capture uses Go2's incoming WebRTC microphone, with the same noise reduction
 and 5× gain as Parrot. The phone/computer microphone is never requested. Pause
 briefly before speaking while the noise filter initializes. Recording does not
@@ -64,6 +100,11 @@ stop on silence; it ends on the second press or saves automatically at 55 second
 Closing the panel, hiding the app, disconnecting, or emergency stop cancels an
 unfinished recording. It also stops panel audio and restores the previous repeat
 setting when the connection is available. Closing does not issue a posture command.
+Opening the native file chooser also takes browser focus: the shell preserves
+Communication only while that chooser is pending, so the selected file can reach
+its upload handler. Drive inputs still stop on focus loss. Cancelling the chooser
+keeps the panel open; navigation, page exit, disconnect and emergency stop still
+close it even during file selection.
 
 Clips are saved in Go2's audio library, using versioned names
 `Comm <slot> <timestamp>-<suffix>`. Opening on another client recovers the latest
@@ -71,7 +112,53 @@ version from the robot. The replacement is uploaded and its ID confirmed before
 old versions of that slot are removed. Unrelated recordings are never deleted.
 One free library slot is needed for safe replacement; if the 10-clip library is
 full, remove an unused clip through **More → Sound & voice** first. Renaming a
-Communication clip outside this panel removes its slot association.
+Communication clip outside this panel breaks automatic name-based recovery;
+**Use saved audio** can link it again by ID. Clips explicitly selected by another
+slot on this device are protected from replacement cleanup.
+
+**Music** plays its selected song once (`no_cycle`) and requests Dance 1 (1022)
+after the robot confirms that track is playing. Upload a song into this slot, or
+choose an existing library clip under **Use saved audio**. With positive sport
+progress, a routine repeats after at least 1.2 seconds of idle progress and quiet
+joints. The user's Pro danced without positive progress and consequently hit
+the old 15-second no-activity check (screenshot, 2026-11-12). The fallback now
+accepts sustained observed joint motion (at least 500 ms and four moving samples)
+as activity, then requires three seconds of quiet, fresh joint samples before
+repeating. It supports q-only Pro telemetry as well as dq. Missing/zero progress
+alone no longer interrupts an observed dance. Idle startup, a single jolt or a
+two-second stage pause does not count as a completed routine. This is a completion
+heuristic, so longer pauses within the firmware routine still need live testing.
+The panel displays the requested dance number. The song
+is not restarted between routines. **Stop music**, playback ending or changing
+tracks, panel close, backgrounding and disconnect cancel repeats and request
+StopMove (1003) plus audio pause. Emergency stop retains priority over StopMove.
+Routine boundaries may include a brief pause; firmware controls the animation
+and how promptly it responds to StopMove.
+
+For early song termination, **Play song only** uses the same selected library
+ID with no dance requests or Music watchdog. The Music row shows the selected
+robot filename and reported file size when available. This isolates stored-clip
+playback from dance coordination. On 2026-11-12 the user's BIRDBRAIN.mp3 was
+checked locally: approximately 255.9 seconds, converted to an 8,187,948-byte WAV
+without trimming. This validates browser conversion and mocked upload, not
+the actual file stored on Go2. A subsequent direct AudioHub test of **tedo
+birdbrain** played for over a minute, and the user confirmed it exceeded the
+duration reached with dancing. The user then requested Stop, so this was not
+a measurement of the file's total duration. AudioHub's list returned only ID,
+name and upload time, not duration or bytes.
+
+Music requires live playback and sport status. Missing playback confirmation
+for 10 seconds stops startup. After playback begins, missing audio/sport updates
+for 5 seconds (sport loss is tolerated while joint updates remain fresh), a
+rejected dance, or 15 seconds without either progress or sustained joint activity
+pauses dancing with an explanation but does **not** pause the song. Movement
+remains paused until the user starts a new run. A stopped-playback notification
+must persist for 750 ms before it counts as EOF; a brief false status does not
+end a song or restart it. Explicit Stop and disconnect still cancel immediately.
+These thresholds belong to Music only, not automatic mapping. Simulated control
+and UI tests cover repeats, EOF, delayed replies and cancellation; real firmware
+playback cadence, dance interruption behavior and end timing need a supervised
+hardware test.
 
 **Play + offer paw** plays the saved Nice to meet you line once and requests the
 existing `Hello` / Shake Hand action (sport API 1016). This parameter-free

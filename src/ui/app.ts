@@ -48,6 +48,7 @@ import { ErrorsBadge } from './components/errors-badge';
 import { ErrorToastHost } from './components/error-toast';
 import { ErrorsPage } from './components/errors-page';
 import { AudioRecorder, convertFileToWav } from './audio-recorder';
+import { uploadLibraryWav } from './audio-library-upload';
 import type { WebRTCConnection } from '../connection/webrtc';
 import type { Scene3D } from './scene/scene';
 
@@ -101,9 +102,12 @@ export class App {
   }
   private mobileJoysticks: Joystick[] = [];
 
-  mobileSuspend(): void {
+  mobileSuspend(reason: 'background' | 'navigation' = 'navigation'): void {
     this.mappingPage?.cancelAnchorReturn();
-    this.closeCommunicationPanel?.(); this.closeCommunicationPanel = null;
+    // Native file pickers take focus. Keep only that idle picker alive;
+    // movement and other actions still suspend below. Navigation/stop force close.
+    this.closeCommunicationPanel?.(reason === 'background');
+    if (reason !== 'background') this.closeCommunicationPanel = null;
     this.closeParrotPanel?.(); this.closeParrotPanel = null;
     this.parrot?.cancel();
     this.trickOrTreat?.cancel();
@@ -197,7 +201,7 @@ export class App {
   private audioPending = new Map<number, (data: unknown, code?: number) => void>();
   private trickOrTreat: TrickOrTreat | null = null;
   private communication: Communication | null = null;
-  private closeCommunicationPanel: (() => void) | null = null;
+  private closeCommunicationPanel: ((preserveFilePicker?: boolean) => void) | null = null;
   private openingCommunication = false;
   private parrot: Parrot | null = null;
   private closeParrotPanel: (() => void) | null = null;
@@ -1569,6 +1573,7 @@ export class App {
 
     if (d.motor_state) {
       this.trickOrTreat?.jointState(d.motor_state);
+      this.communication?.music.jointState(d.motor_state);
       if (this.scene3d) this.scene3d.robotModel.updateMotorState(d.motor_state);
       if (this.mappingPage) this.mappingPage.updateMotorState(d.motor_state);
       // Go2 lowstate carries 12 real motors followed by zeros; G1 has up to
@@ -1749,6 +1754,7 @@ export class App {
       error_code?: number;
     };
     this.trickOrTreat?.danceProgress(d.progress);
+    this.communication?.music.danceProgress(d.progress);
     this.mappingPage?.setExplorationMotion({
       bodyHeight: d.body_height ?? NaN,
       speed: d.velocity?.length === 3 ? Math.hypot(d.velocity[0], d.velocity[1]) : NaN,
@@ -2063,6 +2069,7 @@ export class App {
     const d = data as { header?: { identity?: { id?: number }; status?: { code?: number } } };
     const id = d.header?.identity?.id;
     this.trickOrTreat?.danceResponse(id, d.header?.status?.code);
+    this.communication?.music.danceResponse(id, d.header?.status?.code);
     if (id === undefined) return;
     const seed = this.mcfSeedPending.get(id);
     if (seed === undefined) return;
@@ -2302,6 +2309,7 @@ export class App {
     if (!state) return;
     this.parrot?.playbackState(state);
     this.trickOrTreat?.playbackState(state);
+    this.communication?.playbackState(state);
     this.settingsPage?.setAudioPlayState(state);
     this.settingsDrawer?.setAudioPlayState(state);
   }
@@ -2470,14 +2478,23 @@ export class App {
       const available = () => !preview && !!handler && handler === this.dataHandler
         && this.webrtc?.channel?.readyState === 'open' && this.currentScreen === 'control' && !this.isEmergencyStopped();
       let panel: ReturnType<typeof openCommunicationPanel> | undefined;
+      const selectionKey = `go2_communication_clips_v1_${this.connectionConfig?.serialNumber || this.connectionConfig?.ip || 'preview'}`;
       this.communication = new Communication({
+        readSelections: () => { try { return JSON.parse(localStorage.getItem(selectionKey) || '{}'); } catch { return {}; } },
+        saveSelections: choices => localStorage.setItem(selectionKey, JSON.stringify(choices)),
         available,
         convertFile: convertFileToWav,
         request: (api, payload) => {
           if (!handler || handler !== this.dataHandler) return Promise.reject(new Error('Go2 is disconnected.'));
           return this.publishAudioRequest(api, payload, true);
         },
-        upload: (wav, name, check) => this.uploadWavToLibrary(wav, name, undefined, check),
+        upload: (wav, name, check, progress) => this.uploadWavToLibrary(wav, name, progress, check),
+        dance: () => available()
+          ? this.publishRequestLogged(RTC_TOPIC.SPORT_MOD, SPORT_CMD.Dance1, '{}', { label: 'Music / Dance 1' })
+          : undefined,
+        stopDance: () => {
+          if (available()) this.publishRequestLogged(RTC_TOPIC.SPORT_MOD, SPORT_CMD.StopMove, '{}', { label: 'Music / stop dance' });
+        },
         recorder: () => {
           const stream = this.audioEl?.srcObject;
           if (!(stream instanceof MediaStream) || !stream.getAudioTracks().some(track => track.readyState === 'live' && track.enabled)) {
@@ -2558,7 +2575,7 @@ export class App {
   }
 
   /** Save a WAV buffer to the robot's audio library via api 2001 (chunked,
-   *  base64, 60 KB blocks). Used by both file upload and the player's record
+   *  base64, 4 KB blocks, raw-file MD5). Used by both file upload and the player's record
    *  button — both persist a named entry that shows up in the list (unlike the
    *  megaphone PTT path, which only broadcasts live and saves nothing). */
   private async uploadWavToLibrary(
@@ -2567,34 +2584,10 @@ export class App {
     onProgress?: (pct: number) => void,
     check?: () => void,
   ): Promise<void> {
-    const bytes = new Uint8Array(wav);
-    let binary = '';
-    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-    const base64Data = btoa(binary);
-
-    const createTime = Math.floor(Date.now() / 1000);
-    const chunkSize = 61440;
-    const chunks: string[] = [];
-    for (let i = 0; i < base64Data.length; i += chunkSize) {
-      chunks.push(base64Data.substring(i, i + chunkSize));
-    }
-
-    for (let i = 0; i < chunks.length; i++) {
-      check?.();
-      const payload = {
-        current_block_index: i + 1,
-        total_block_number: chunks.length,
-        current_block_size: chunks[i].length,
-        block_content: chunks[i],
-        file_name: filename,
-        file_type: 'wav',
-        create_time: createTime,
-        file_size: bytes.length,
-      };
-      await this.publishAudioRequest(2001, JSON.stringify(payload), !!check);
-      check?.();
-      onProgress?.(Math.round(((i + 1) / chunks.length) * 100));
-    }
+    await uploadLibraryWav(wav, filename, {
+      request: (api, payload) => this.publishAudioRequest(api, payload, true),
+      check, progress: onProgress,
+    });
   }
 
   // ── Audio player record (saves to library, unlike the megaphone PTT) ──

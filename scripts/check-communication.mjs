@@ -8,7 +8,7 @@ function fixture(overrides={}) {
  let files=[{UNIQUE_ID:'old',CUSTOM_NAME:oldName},{UNIQUE_ID:'nice',CUSTOM_NAME:'Comm nice 1700000000000-abcdef.wav'},{UNIQUE_ID:'other',CUSTOM_NAME:'Parrot 1700000000000-abc'}];
  let id=0;
  const recorder={start:async()=>events.push('start'),stop:async()=>{events.push('stop');return new ArrayBuffer(100);},destroy:()=>events.push('destroy')};
- const opts={available:()=>true,convertFile:async()=>new ArrayBuffer(100),recorder:()=>recorder,offerPaw:()=>events.push('paw'),state:s=>states.push(s),
+ const opts={available:()=>true,wait:async()=>{},convertFile:async()=>new ArrayBuffer(100),recorder:()=>recorder,offerPaw:()=>events.push('paw'),state:s=>states.push(s),
  request:async(api,payload)=>{const data=JSON.parse(payload);events.push([api,data]);if(api===1001)return {audio_list:files};if(api===1010)return{play_mode:'list_loop'};if(api===1009)files=files.filter(f=>f.UNIQUE_ID!==data.unique_id);return {};},
  upload:async(wav,name,check)=>{check();events.push('upload');files.push({UNIQUE_ID:`new${++id}`,CUSTOM_NAME:name});},...overrides};
  const c=new Communication(opts);return{c,events,states,opts,recorder,get files(){return files;}};
@@ -91,5 +91,101 @@ await test('upload respects library capacity and cancellation during conversion'
  await g.c.toggleRecord('nice');assert.ok(!g.events.includes('start'));
  const closing=g.c.close();release(new ArrayBuffer(100));await upload;await closing;
  assert.ok(!g.events.includes('upload'));assert.equal(requests(g,1009).length,0);
+});
+await test('delayed library update eventually enables the new voice',async()=>{
+ const f=fixture();await f.c.load();let pending,reads=0;const original=f.opts.request;
+ f.opts.upload=async(wav,name,check,progress)=>{check();progress?.(100);pending={UNIQUE_ID:'late',CUSTOM_NAME:name};};
+ f.opts.request=async(api,payload)=>{if(api===1001&&pending&&++reads===4)f.files.push(pending);return original(api,payload);};
+ await f.c.uploadFile('hi',{size:100});assert.equal(f.c.state.clips.hi.UNIQUE_ID,'late');assert.equal(reads,4);
+ assert.ok(f.states.some(s=>s.message.includes('100%')));await f.c.close();
+});
+await test('differently named upload can be explicitly selected, persists and plays by ID',async()=>{
+ let choices={};const f=fixture({saveSelections:value=>{choices=value;},readSelections:()=>choices});await f.c.load();
+ f.opts.upload=async()=>f.files.push({UNIQUE_ID:'generated',CUSTOM_NAME:'UserAudio_generated.wav'});
+ await f.c.uploadFile('hi',{size:100});assert.match(f.c.state.message,/different name/);assert.equal(f.c.state.clips.hi.UNIQUE_ID,'old');assert.equal(requests(f,1009).length,0);
+ await f.c.useSavedClip('hi','generated');assert.equal(f.c.state.clips.hi.UNIQUE_ID,'generated');await f.c.play('hi');assert.equal(requests(f,1002).at(-1)[1].unique_id,'generated');
+ const reopened=new Communication(f.opts);await reopened.load();assert.equal(reopened.state.clips.hi.UNIQUE_ID,'generated');await reopened.close();await f.c.close();
+});
+await test('replacement does not delete an owned clip selected by another slot',async()=>{
+ const f=fixture();await f.c.load();await f.c.useSavedClip('guide','old');await f.c.uploadFile('hi',{size:100});assert.equal(requests(f,1009).length,0);assert.equal(f.c.state.clips.guide.UNIQUE_ID,'old');await f.c.close();
+});
+await test('Music slot routes playback to dance controller and Stop/close cancel it',async()=>{
+ const f=fixture();f.files.push({UNIQUE_ID:'song',CUSTOM_NAME:'Comm music 1700000000000-abcdef'});
+ f.opts.dance=()=>{f.events.push('dance');return 55;};f.opts.stopDance=()=>f.events.push('dance-stop');
+ await f.c.load();await f.c.play('music');assert.equal(f.c.state.phase,'music');assert.ok(!f.events.includes('dance'));
+ f.c.music.playbackState({is_playing:true,current_audio_unique_id:'song'});assert.ok(f.events.includes('dance'));
+ assert.equal(requests(f,1002).at(-1)[1].unique_id,'song');
+ await f.c.stopPlayback();assert.equal(f.c.state.phase,'idle');assert.ok(f.events.includes('dance-stop'));
+ const beforeSolo=f.events.filter(e=>e==='dance').length;
+ await f.c.play('music',false);assert.equal(f.c.state.phase,'idle');assert.match(f.c.state.message,/song only/);
+ f.c.music.playbackState({is_playing:true,current_audio_unique_id:'song'});
+ assert.equal(f.events.filter(e=>e==='dance').length,beforeSolo,'Song-only playback never starts a dance');
+ await f.c.play('music');f.c.music.playbackState({is_playing:true,current_audio_unique_id:'song'});
+ await f.c.close();const dances=f.events.filter(e=>e==='dance').length;
+ f.c.music.playbackState({is_playing:true,current_audio_unique_id:'song'});assert.equal(f.events.filter(e=>e==='dance').length,dances);
+ assert.equal(f.events.filter(e=>e==='dance-stop').length,2);assert.equal(f.c.state.phase,'closed');
+});
+await test('Other recordings never automatically play the follow-up',async()=>{
+ for(const slot of ['line2','hi','after1']) {
+  const f=fixture();f.files.push({UNIQUE_ID:'followup',CUSTOM_NAME:'Comm after1 1700000000000-abcdef'},
+   {UNIQUE_ID:'legacy-thanks',CUSTOM_NAME:'Comm thanks 1700000000000-abcdef'});
+  await f.c.load();await f.c.toggleRecord(slot);await f.c.toggleRecord(slot);
+  assert.ok(f.c.state.clips[slot]);assert.equal(f.c.state.phase,'idle');assert.equal(requests(f,1002).length,0);
+  if(slot!=='after1')assert.ok(f.files.some(x=>x.UNIQUE_ID==='followup'));assert.ok(f.files.some(x=>x.UNIQUE_ID==='legacy-thanks'));
+  await f.c.close();
+ }
+});
+await test('VL1 Stop & save starts the follow-up before upload without waiting for its end',async()=>{
+ const f=fixture();f.files.push({UNIQUE_ID:'followup',CUSTOM_NAME:'Comm after1 1700000000000-abcdef'});
+ await f.c.load();await f.c.toggleRecord('line1');assert.equal(requests(f,1002).length,0);
+ const upload=f.opts.upload;let release;
+ f.opts.upload=async(...args)=>{args[3]?.(25);await new Promise(r=>release=r);return upload(...args);};
+ const saving=f.c.toggleRecord('line1');await flush();
+ assert.deepEqual(requests(f,1002).map(e=>e[1].unique_id),['followup']);
+ assert.ok(f.events.indexOf('stop')<f.events.findIndex(e=>Array.isArray(e)&&e[0]===1002),'Stop mic before playing');
+ assert.equal(f.c.state.phase,'saving');assert.equal(f.c.state.uploadPercent,25);assert.equal(f.c.state.audioBusy,false);
+ const pauses=requests(f,1003).length;
+ release();await saving;
+ assert.equal(f.c.state.phase,'idle','Does not wait for playback-end telemetry');assert.ok(f.c.state.clips.line1);
+ assert.equal(requests(f,1002).length,1);assert.equal(requests(f,1003).length,pauses,'Upload completion does not stop the message');
+ await f.c.close();
+});
+await test('Failed automatic playback still saves VL1',async()=>{
+ const f=fixture();f.files.push({UNIQUE_ID:'followup',CUSTOM_NAME:'Comm after1 1700000000000-abcdef'});
+ await f.c.load();await f.c.toggleRecord('line1');const base=f.opts.request;
+ f.opts.request=async(api,payload)=>{if(api===1002)throw Error('Playback rejected');return base(api,payload);};
+ await f.c.toggleRecord('line1');assert.ok(f.c.state.clips.line1);assert.equal(f.c.state.phase,'idle');await f.c.close();
+});
+await test('Play and Stop work during an upload without cancelling or restarting it',async()=>{
+ const f=fixture();await f.c.load();await f.c.toggleRecord('line1');
+ const upload=f.opts.upload;let release;
+ f.opts.upload=async(...args)=>{args[3]?.(25);await new Promise(r=>release=r);return upload(...args);};
+ const saving=f.c.toggleRecord('line1');await flush();
+ assert.equal(f.c.state.phase,'saving');assert.equal(requests(f,1002).length,0);
+ await f.c.play('hi');assert.equal(requests(f,1002).at(-1)[1].unique_id,'old');
+ assert.equal(f.c.state.phase,'saving');assert.equal(f.c.state.uploadPercent,25);
+ await f.c.stopPlayback();assert.equal(f.c.state.phase,'saving');assert.equal(f.c.state.uploadPercent,25);
+ await f.c.play('nice');assert.equal(f.events.filter(x=>x==='paw').length,1);
+ release();await saving;assert.ok(f.c.state.clips.line1);assert.equal(f.c.state.phase,'idle');
+ assert.equal(f.events.filter(x=>x==='upload').length,1);await f.c.close();
+});
+await test('Audio errors during upload do not discard the new recording',async()=>{
+ const f=fixture();await f.c.load();await f.c.toggleRecord('line1');
+ const upload=f.opts.upload;let release;
+ f.opts.upload=async(...args)=>{await new Promise(r=>release=r);return upload(...args);};
+ const saving=f.c.toggleRecord('line1');await flush();const base=f.opts.request;
+ f.opts.request=async(api,payload)=>{if(api===1002)throw Error('Playback rejected');return base(api,payload);};
+ await f.c.play('hi');assert.equal(f.c.state.phase,'saving');assert.match(f.c.state.message,/Playback rejected/);
+ release();await saving;assert.ok(f.c.state.clips.line1);await f.c.close();
+});
+await test('Close waits for manual playback in flight and suppresses a late paw',async()=>{
+ const f=fixture();await f.c.load();await f.c.toggleRecord('line1');
+ const upload=f.opts.upload;let releaseUpload,releasePlay;
+ f.opts.upload=async(...args)=>{await new Promise(r=>releaseUpload=r);return upload(...args);};
+ const saving=f.c.toggleRecord('line1');await flush();const base=f.opts.request;
+ f.opts.request=async(api,payload)=>{const result=await base(api,payload);if(api===1002)await new Promise(r=>releasePlay=r);return result;};
+ const playing=f.c.play('nice');await flush();const closing=f.c.close();releasePlay();releaseUpload();
+ await Promise.all([saving,playing,closing]);assert.equal(f.c.state.phase,'closed');assert.ok(!f.events.includes('paw'));
+ assert.equal(requests(f,1003).at(-1)[0],1003);
 });
 console.log(`${count} Communication checks passed; no robot connected.`);

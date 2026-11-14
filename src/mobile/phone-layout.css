@@ -1,0 +1,80 @@
+/* Fit the phone itself, rather than scaling a desktop-sized page with zoom.
+   Keep inputs at 16px and touch targets at least 44px. */
+@media (max-width:600px), (max-width:1000px) and (max-height:500px) {
+  :root {font-size:16px;--tab-space:calc(50px + env(safe-area-inset-bottom));}
+  .pocket-tabbar {min-height:var(--tab-space);gap:4px;padding-top:3px;}
+  .pocket-tabbar button {min-height:44px;padding:4px 8px;font-size:11px;}
+  .pocket-tabbar svg {width:22px;height:22px;}
+  .pocket-home,.pocket-tools {padding:16px 16px 24px;}
+  .pocket-header {gap:10px;margin-bottom:20px;}
+  .pocket-brand {font-size:20px;gap:10px;}
+  .pocket-brand small {font-size:12px;}
+  .pocket-logo {width:44px;height:44px;border-radius:12px;}
+  .pocket-logo svg {width:32px;height:32px;}
+  .pocket-avatar {min-width:44px;min-height:44px;padding:9px;}
+  .pocket-avatar svg {width:24px;height:24px;}
+  .pocket-eyebrow {font-size:11px;letter-spacing:1.2px;margin-bottom:8px;}
+  .pocket-intro {margin-bottom:18px;}
+  .pocket-intro h1 {font-size:36px;letter-spacing:-1.5px;}
+  .pocket-intro p {font-size:15px;margin-top:12px;}
+  .pocket-robot-card {height:210px;border-radius:20px;}
+  .pocket-robot-top {top:14px;left:16px;right:16px;font-size:12px;}
+  .pocket-status {font-size:12px;padding:6px 9px;}
+  .pocket-robot-bottom {bottom:14px;left:16px;right:16px;}
+  .pocket-robot-bottom strong {font-size:28px;}
+  .pocket-primary {min-height:64px;padding:12px 16px;margin-top:12px;border-radius:16px;}
+  .pocket-primary span {font-size:19px;}
+  .pocket-primary small {font-size:13px;}
+  .pocket-primary>svg {width:28px;height:28px;}
+  .pocket-telemetry {padding:16px 4px;gap:16px;}
+  .pocket-telemetry strong {font-size:19px;}
+  .pocket-section-heading h2 {font-size:21px;}
+  .pocket-feature-grid button {padding:16px 12px;min-height:160px;}
+  .pocket-feature-grid strong {font-size:18px;margin-top:12px;}
+  .pocket-feature-grid small {font-size:14px;}
+  .pocket-tools h1 {font-size:30px;}
+  .pocket-subtitle {font-size:16px;margin:12px 0 20px;}
+  .pocket-tool-section>h2,.pocket-advanced>summary {font-size:20px;margin:18px 0 10px;}
+  .pocket-tool-row {min-height:80px;padding:14px;gap:12px;}
+  .pocket-tool-row strong {font-size:18px;}
+  .pocket-tool-row small {font-size:14px;}
+  .page-content {padding:16px;font-size:16px;}
+  html body :is(.page-header,.settings-drawer-header) {min-height:64px;padding:10px 16px!important;gap:10px;}
+  html body :is(.page-header,.settings-drawer-header) h2 {font-size:22px!important;}
+  .page-back-btn,.settings-drawer-close {min-width:44px;min-height:44px;padding:11px;}
+  html body :is(.settings-section,.status-section,.svc-row,.bt-device-row,.bt-adapter-row,.mapping-section,.aud-item,.aud-player,.acct-info-card) {padding:14px!important;border-radius:14px;}
+  html body :is(.settings-category-title,.status-section-title,.mapping-section-title,.mapping-modal-title,.aud-modal-title) {font-size:19px!important;margin-bottom:10px;}
+  html body :is(.settings-title,.status-value,.svc-name,.bt-device-name,.aud-name,.acct-info-value) {font-size:16px!important;}
+  html body :is(input:not([type=checkbox]):not([type=range]),select,textarea,.bt-field,.mapping-input,.acct-input,.aud-modal-input) {min-height:44px;font-size:16px!important;padding:10px;}
+  html body select {height:44px!important;}
+  html body :is(.page-content,.connection-panel,.mapping-sidebar,.settings-drawer-body) button {min-height:44px;font-size:16px!important;}
+  .connection-screen {padding:16px!important;}
+  .connection-modal {padding:18px;border-radius:18px;}
+  .conn-title {font-size:24px!important;}
+  .connection-panel label {font-size:16px;}
+  .form-group {margin:16px 0;}
+  .conn-back-link {min-height:44px;font-size:16px!important;}
+  .pocket-network-help {font-size:15px!important;margin:12px 0;}
+  .settings-drawer-body {padding:14px;}
+  .settings-section {gap:14px;}
+  .settings-category {margin-bottom:20px;}
+}
+
+@media (orientation:landscape) and (max-width:1000px) and (max-height:500px) {
+  .control-screen {--drive-stop-size:44px;--drive-controls-gap:6px;}
+  .control-screen .nav-bar {height:44px;gap:10px;}
+  html body .control-screen .nav-bar :is(.nav-circle-icon,.back-btn),
+  .control-screen .pocket-drive-stop {width:44px!important;height:44px!important;min-width:44px;min-height:44px!important;scale:1;border-radius:12px!important;}
+  .control-screen .nav-circle-icon svg {width:26px!important;height:26px!important;}
+  .control-screen .operation-wrapper {grid-template-columns:124px minmax(0,1fr) 124px;gap:8px;}
+  .control-screen .joystick-box {width:124px;height:124px;}
+  .control-screen .pip-camera {top:66px!important;width:136px!important;height:82px!important;}
+  .control-screen .pocket-quick-actions {gap:6px;padding-right:62px;}
+  .control-screen .pocket-quick-actions button,.control-screen .action-grid-btn {width:56px;min-width:56px;height:56px;min-height:56px;border-radius:12px;}
+  .control-screen .pocket-map-shortcut,.control-screen .pocket-communication-shortcut {height:44px;font-size:13px;}
+  .action-popup {padding:16px;}
+  .action-popup-header {margin-bottom:12px;}
+  .action-popup-title {font-size:22px;}
+  .action-popup-item {min-height:80px;padding:8px;}
+  .action-popup-label {font-size:14px;}
+}
