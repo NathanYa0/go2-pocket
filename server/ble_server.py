@@ -12,6 +12,7 @@ import logging
 import secrets
 import struct
 import time
+import sys
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from enum import IntEnum
@@ -20,9 +21,12 @@ from typing import Optional
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from bleak import BleakScanner  # scanning only; connections use pygatt
+from bleak import BleakScanner, BleakClient
 from Crypto.Cipher import AES
-import pygatt
+if sys.platform != "darwin":
+    import pygatt
+else:
+    pygatt = None
 
 log = logging.getLogger("ble_server")
 
@@ -42,9 +46,9 @@ DEVICE_PREFIXES = ("Go2_", "G1_", "B2_", "H1_", "X1_")
 REMOTE_PREFIX = "Unitree"
 CHUNK_SIZE = 14
 DEFAULT_ADAPTER = "hci0"
-_current_adapter = DEFAULT_ADAPTER
+_current_adapter = "CoreBluetooth" if sys.platform == "darwin" else DEFAULT_ADAPTER
 
-# V3 protocol (G1 firmware 1.5.1+; not supported on Go2) — sent unencrypted
+# V3 protocol (newer Go2 and G1 firmware) — sent unencrypted
 # with this magic prefix. See docs/bluetooth-v3.md.
 V3_MAGIC = bytes([0x00, 0x55, 0x54, 0x32, 0x35])  # "\x00UT25"
 
@@ -335,9 +339,15 @@ class BLESession:
             reply_data = (ts + 1).to_bytes(8, "big")
             pkt = build_gcm_v3(0x0c, reply_data, self.aes_key)
             log.info(f"V3 CHECK_3 reply: ts={ts}+1 ({len(pkt)}B)")
-            self._loop.run_in_executor(None, self._write_sync, pkt)
+            task = self._loop.create_task(self._write(pkt))
+            task.add_done_callback(self._check_write_done)
         except Exception as e:
             log.warning(f"V3 CHECK_3 reply failed: {e}")
+
+    @staticmethod
+    def _check_write_done(task):
+        if not task.cancelled() and task.exception():
+            log.warning("BLE authentication reply write failed: %s", task.exception())
 
     def _on_disconnect(self, event=None):
         log.info("Robot disconnected (pygatt callback)")
@@ -1094,7 +1104,63 @@ class RemoteSession:
 
 # ─── Singleton sessions & device cache ───────────────────────────────
 
-session = BLESession()
+class MacBLESession(BLESession):
+    """CoreBluetooth transport; reuse the same authenticated robot protocol."""
+
+    async def connect(self, address: str) -> str:
+        await self.disconnect()
+        self.address = address
+        self._loop = asyncio.get_running_loop()
+        self._write_lock = asyncio.Lock()
+        device = _scanned_devices.get(address)
+        if device is None:
+            raise HTTPException(400, "Find Go2 first, then select it from the scan results.")
+        client = BleakClient(device, disconnected_callback=self._disconnected, timeout=20)
+        self._device = client
+        try:
+            await client.connect()
+            chars = {c.uuid.lower(): c for service in client.services for c in service.characteristics}
+            if NUS_TX_UUID in chars and NUS_RX_UUID in chars:
+                self.write_uuid, self.notify_uuid, self.protocol = NUS_TX_UUID, NUS_RX_UUID, "nus"
+            elif OLD_WRITE_UUID in chars and OLD_NOTIFY_UUID in chars:
+                self.write_uuid, self.notify_uuid, self.protocol = OLD_WRITE_UUID, OLD_NOTIFY_UUID, "ffe0"
+            else:
+                raise RuntimeError("Go2 provisioning characteristics were not found.")
+            props = chars[self.write_uuid].properties
+            if "write" not in props and "write-without-response" not in props:
+                raise RuntimeError("Go2 provisioning characteristic is not writable.")
+            self._write_response = "write" in props
+            await client.start_notify(self.notify_uuid, self._on_notify)
+            self._connected = True
+            return self.protocol
+        except (Exception, asyncio.CancelledError):
+            await self.disconnect()
+            raise
+
+    def _disconnected(self, client):
+        if self._device is client:
+            self._connected = False
+            self.aes_key = None
+
+    async def _write(self, packet: bytes) -> None:
+        client = self._device
+        if not self.connected or client is None or not client.is_connected:
+            raise RuntimeError("Go2 Bluetooth disconnected.")
+        async with self._write_lock:
+            await client.write_gatt_char(self.write_uuid, packet, response=self._write_response)
+
+    async def disconnect(self):
+        client = self._device
+        self._connected = False
+        try:
+            if client is not None:
+                await client.disconnect()
+        finally:
+            # Reset protocol/key/reassembly state without invoking Linux methods.
+            BLESession.__init__(self)
+
+
+session = MacBLESession() if sys.platform == "darwin" else BLESession()
 remote_session = RemoteSession()
 _scanned_devices: dict[str, object] = {}  # address -> BLEDevice from last scan
 
@@ -1160,6 +1226,10 @@ def _list_adapters_sync() -> dict:
             ...
             Manufacturer: not assigned (2875)
     """
+    if sys.platform == "darwin":
+        return {"adapters": [{"name": "CoreBluetooth", "address": "", "up": True,
+                              "type": "macOS system Bluetooth (radio state checked on scan)"}],
+                "current": "CoreBluetooth"}
     import subprocess
     adapters = []
     try:
@@ -1262,6 +1332,8 @@ async def list_adapters():
 async def set_adapter(name: str):
     """Switch the active BLE adapter."""
     global _current_adapter
+    if sys.platform == "darwin" and name != "CoreBluetooth":
+        raise HTTPException(400, "macOS selects its Bluetooth adapter automatically.")
     if session.connected:
         await session.disconnect()
     _current_adapter = name
@@ -1274,7 +1346,7 @@ async def scan(timeout: float = 10.0):
     try:
         devices = await BleakScanner.discover(
             timeout=timeout, return_adv=True, scanning_mode="active",
-            bluez={"adapter": _current_adapter},
+            **({"bluez": {"adapter": _current_adapter}} if sys.platform != "darwin" else {}),
         )
     except Exception as e:
         # BlueZ can raise "No discovery started" if pygatt/bluetoothctl disturbed the adapter
@@ -1284,7 +1356,7 @@ async def scan(timeout: float = 10.0):
         try:
             devices = await BleakScanner.discover(
                 timeout=timeout, return_adv=True, scanning_mode="active",
-                bluez={"adapter": _current_adapter},
+                **({"bluez": {"adapter": _current_adapter}} if sys.platform != "darwin" else {}),
             )
         except Exception as e2:
             raise HTTPException(500, f"Scan failed: {e2}")
@@ -1439,6 +1511,8 @@ async def remote_status():
 
 @app.post("/remote/connect")
 async def remote_connect(address: str):
+    if sys.platform == "darwin":
+        raise HTTPException(501, "Mac Bluetooth currently supports robot Wi-Fi setup, not the handheld BLE remote.")
     try:
         await remote_session.connect(address)
         return {"connected": True, "address": address, "name": remote_session.name}
@@ -1511,4 +1585,5 @@ if __name__ == "__main__":
     # Quiet pygatt's per-notification INFO spam (one line per packet at 20 Hz)
     logging.getLogger("pygatt").setLevel(logging.WARNING)
     logging.getLogger("pygatt.backends.gatttool.gatttool").setLevel(logging.WARNING)
-    uvicorn.run(app, host="0.0.0.0", port=5051)
+    # Device-key routes contain credentials in query parameters. Do not log URLs.
+    uvicorn.run(app, host="127.0.0.1", port=5051, access_log=False)

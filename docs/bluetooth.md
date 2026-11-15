@@ -31,14 +31,50 @@ Once paired, a gamepad icon appears in the control view's setting bar — click 
 
 Full protocol details and frame layout in [remote-control.md](remote-control.md).
 
-## Running the BLE Server
+## Desktop setup (macOS and Linux)
 
-The dev `npm run start` script launches both Vite and the Python BLE backend together. To run them separately:
+The installed iPhone/Android app uses native Bluetooth directly. The desktop
+browser uses a local Python helper on `127.0.0.1:5051`, proxied by Vite through
+`/ble-api/*`.
+
+One-time installation, from the repository directory:
 
 ```bash
-pip install -r server/requirements.txt
-npm run ble-server     # Python FastAPI BLE backend
-npm run dev            # Vite frontend (no BLE)
+npm run ble:setup
 ```
 
-The frontend talks to the BLE server through Vite's `/ble-api/*` proxy, so CORS isn't a concern.
+Run the helper and web app in two terminal windows:
+
+```bash
+npm run ble-server
+```
+
+```bash
+npm run dev
+```
+
+On macOS, allow Bluetooth access for the program hosting Python (Terminal,
+iTerm, or the coding app) when prompted. If denied, enable it under macOS
+**System Settings → Privacy & Security → Bluetooth**, then restart the helper.
+Turn Bluetooth on before scanning. The Mac backend uses Bleak/CoreBluetooth;
+Linux keeps its existing pygatt/gatttool transport. macOS uses device UUIDs
+rather than Bluetooth MAC addresses and selects the system adapter automatically.
+
+In Go2 Pocket, choose **Connect Go2 → Access Point (AP) → Set up Go2 hotspot**.
+Click **Find Go2**, then **Connect**. On newer firmware, expand **Device key**
+and paste the robot's existing 32-character AES key to unlock configuration.
+No official app login is needed when you already have that key. Set the hotspot
+SSID/password, check the network-change confirmation, and click **Enable
+hotspot**. Join that Wi-Fi in the computer's network settings, then return to
+AP mode in Go2 Pocket to connect over Wi-Fi.
+
+Mac support here covers **robot provisioning**, not the separate handheld BLE
+remote. That remote's desktop backend remains Linux-only. A successful scan
+does not prove that authentication or a hotspot change succeeded; the UI reports
+those results separately. Never infer hotspot success from an empty scan.
+
+Transport tests (fake client, no radio or network changes):
+
+```bash
+.venv/ble/bin/python scripts/check-mac-ble.py
+```

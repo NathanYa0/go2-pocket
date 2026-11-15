@@ -22,7 +22,9 @@
     "check:map-live": "node scripts/check-mapping-live-view.mjs",
     "mapping:setup": "bash integrations/dimos/setup.sh",
     "check:mapping-service": "node --test scripts/check-mapping-service.mjs",
-    "check:communication": "node scripts/check-communication.mjs && node scripts/check-audio-library-upload.mjs && node scripts/check-music-dance.mjs"
+    "check:communication": "node scripts/check-communication.mjs && node scripts/check-audio-library-upload.mjs && node scripts/check-music-dance.mjs",
+    "ble:setup": "python3 -m venv .venv/ble && .venv/ble/bin/python -m pip install -r server/requirements.txt",
+    "ble-server": ".venv/ble/bin/python server/ble_server.py"
   },
   "devDependencies": {
     "@capacitor/cli": "^8.5.3",
